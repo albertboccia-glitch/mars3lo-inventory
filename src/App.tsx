@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-// In Vercel le chiavi arrivano da Environment Variables
+// Client Supabase
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL!,
   import.meta.env.VITE_SUPABASE_ANON_KEY!
@@ -33,9 +33,11 @@ export default function App() {
   const [cliente, setCliente] = useState("");
   const [sconto, setSconto] = useState(0);
   const [isMagazzino, setIsMagazzino] = useState(false);
-  const [pin, setPin] = useState("");
 
-  // Carica stock da Supabase
+  const [search, setSearch] = useState("");
+  const [categoria, setCategoria] = useState("ALL");
+
+  // Carica stock
   useEffect(() => {
     loadStock();
     const channel = supabase
@@ -43,15 +45,10 @@ export default function App() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "stock" },
-        () => {
-          loadStock();
-        }
+        () => loadStock()
       )
       .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => supabase.removeChannel(channel);
   }, []);
 
   async function loadStock() {
@@ -62,13 +59,19 @@ export default function App() {
     }
   }
 
-  // Raggruppa per articolo+colore → taglie in orizzontale
+  // Raggruppa per articolo+colore
   function groupData(data: StockRow[]) {
     const groups: any = {};
     data.forEach((r) => {
       const key = r.articolo + "___" + r.colore;
       if (!groups[key]) {
-        groups[key] = { articolo: r.articolo, colore: r.colore, prezzo: r.prezzo, taglie: {} };
+        groups[key] = {
+          articolo: r.articolo,
+          categoria: r.categoria,
+          colore: r.colore,
+          prezzo: r.prezzo,
+          taglie: {},
+        };
       }
       groups[key].taglie[r.taglia] = r.qty;
     });
@@ -110,12 +113,22 @@ export default function App() {
     await loadStock();
   }
 
+  // Filtri applicati
+  const visibili = grouped.filter((g: any) => {
+    const matchCategoria = categoria === "ALL" || g.categoria === categoria;
+    const matchSearch =
+      search === "" ||
+      g.articolo.toLowerCase().includes(search.toLowerCase()) ||
+      g.colore.toLowerCase().includes(search.toLowerCase());
+    return matchCategoria && matchSearch;
+  });
+
   return (
     <div className="p-4 font-sans">
-      {/* Header */}
+      {/* Header con logo e cliente */}
       <div className="flex justify-between items-center mb-4">
         <div className="flex items-center gap-4">
-          <h1 className="text-2xl font-bold">MARS3LO</h1>
+          <img src="/logo.png" alt="logo" className="h-10" />
           <input
             type="text"
             placeholder="Nome cliente"
@@ -147,21 +160,47 @@ export default function App() {
         </div>
       </div>
 
+      {/* Filtri */}
+      <div className="flex gap-2 mb-4">
+        {["ALL", "G", "P", "MG", "GB", "PM", "C"].map((cat) => (
+          <button
+            key={cat}
+            className={`px-3 py-1 rounded ${
+              categoria === cat ? "bg-blue-600 text-white" : "bg-gray-200"
+            }`}
+            onClick={() => setCategoria(cat)}
+          >
+            {cat === "ALL" ? "Tutti" : cat}
+          </button>
+        ))}
+        <input
+          type="text"
+          placeholder="Cerca articolo o colore"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="border p-1 rounded flex-1"
+        />
+      </div>
+
       {/* Griglia taglie */}
       <div className="space-y-6">
-        {grouped.map((g: any) => {
+        {visibili.map((g: any) => {
           const selezioni: Record<string, number> = {};
           return (
             <div key={g.articolo + g.colore} className="border p-3 rounded shadow">
               <div className="flex justify-between items-center mb-2">
                 <div className="font-bold text-lg">
-                  {g.articolo} <span className="font-normal">({g.colore})</span>
+                  {g.articolo} {g.categoria && <span>({g.categoria})</span>}{" "}
+                  <span className="font-bold">{g.colore}</span>
                 </div>
                 <div className="text-sm">€ {g.prezzo.toFixed(2)}</div>
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 overflow-x-auto">
                 {Object.entries(g.taglie).map(([taglia, disp]: any) => (
-                  <div key={taglia} className="flex flex-col items-center border rounded p-2 w-16">
+                  <div
+                    key={taglia}
+                    className="flex flex-col items-center border rounded p-2 w-16"
+                  >
                     <div className="font-bold">{taglia}</div>
                     <div className="text-sm text-gray-500">{disp} disp.</div>
                     <input
@@ -181,66 +220,4 @@ export default function App() {
                 onClick={() => addToCart(g, selezioni)}
               >
                 Aggiungi al carrello
-              </button>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Carrello */}
-      <div className="mt-6 border-t pt-4">
-        <h2 className="text-xl font-bold mb-2">Carrello</h2>
-        {carrello.length === 0 && <div>Nessun articolo</div>}
-        {carrello.length > 0 && (
-          <table className="w-full text-sm mb-2">
-            <thead>
-              <tr className="border-b">
-                <th className="text-left">Articolo</th>
-                <th>Taglia</th>
-                <th>Colore</th>
-                <th>Qty</th>
-                <th>Prezzo</th>
-                <th>Totale</th>
-              </tr>
-            </thead>
-            <tbody>
-              {carrello.map((r, i) => (
-                <tr key={i} className="border-b">
-                  <td>{r.articolo}</td>
-                  <td>{r.taglia}</td>
-                  <td>{r.colore}</td>
-                  <td>{r.richiesti}</td>
-                  <td>€ {r.prezzo.toFixed(2)}</td>
-                  <td>€ {(r.richiesti * r.prezzo).toFixed(2)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-
-        <div className="flex items-center gap-4 mb-2">
-          <div>Totale lordo: € {totaleLordo.toFixed(2)}</div>
-          <div>
-            Sconto %:{" "}
-            <input
-              type="number"
-              value={sconto}
-              onChange={(e) => setSconto(Number(e.target.value))}
-              className="w-16 border rounded text-center"
-            />
-          </div>
-          <div className="font-bold">Totale: € {totaleNetto.toFixed(2)}</div>
-        </div>
-
-        {isMagazzino && carrello.length > 0 && (
-          <button
-            className="bg-green-600 text-white px-3 py-1 rounded"
-            onClick={confermaOrdine}
-          >
-            Conferma Ordine (MAGAZZINO)
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
+              </butt
