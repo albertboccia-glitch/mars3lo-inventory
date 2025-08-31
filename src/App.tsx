@@ -380,10 +380,14 @@ export default function App() {
               </tr>
             </thead>
             <tbody>
-              {carrello.map((r, i) => (
-                <tr key={i} className="border-t">
-                  <td>{r.articolo}</td>
-                  <td>{r.colore}</td>
-                  <td>{r.taglia}</td>
-                  <td>{r.richiesti}</td>
-                  <td>€ {r.prezzo.toFixed(2)}</td>
+  {carrello.map((r, i) => (
+    <tr key={i} className="border-t">
+      <td>{r.articolo}</td>
+      <td>{r.colore}</td>
+      <td>{r.taglia}</td>
+      <td>{r.richiesti}</td>
+      <td>€ {r.prezzo.toFixed(2)}</td>
+      <td>€ {(r.richiesti * r.prezzo).toFixed(2)}</td>
+    </tr>
+  ))}
+</tbody>
