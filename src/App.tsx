@@ -3,28 +3,23 @@ import { createClient } from "@supabase/supabase-js";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
+import { saveAs } from "file-saver";
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL!,
+  import.meta.env.VITE_SUPABASE_ANON_KEY!
+);
 
-// --- credenziali fisse ---
-const USERS = [
-  { id: "Mars3loBo", pass: "Francesco01", role: "showroom" },
-  { id: "Mars3loNa", pass: "Gbesse01", role: "magazzino" },
-];
+// Classificazione articoli
+function classify(code: string): string {
+  if (/^GB\d+/i.test(code)) return "Giubbotti";
+  if (/^G\d+/i.test(code)) return "Giacche";
+  if (/^M\d+/i.test(code)) return "Maglie";
+  if (/^P\d+/i.test(code)) return "Pantaloni";
+  return "Altro";
+}
 
-// categorie leggibili
-const CATEGORIE_LABELS: Record<string, string> = {
-  G: "Giacche",
-  P: "Pantaloni",
-  GB: "Giubbotti",
-  MG: "Maglie",
-  PM: "Pantaloni Felpa",
-  C: "Camicie",
-};
-
-interface StockRow {
+type StockRow = {
   sku: string;
   articolo: string;
   categoria: string;
@@ -32,394 +27,288 @@ interface StockRow {
   colore: string;
   qty: number;
   prezzo: number;
-}
+};
 
-interface CartRow {
+type CartRow = {
   sku: string;
   articolo: string;
   colore: string;
   taglia: string;
   richiesti: number;
   prezzo: number;
-}
+};
+
+type Order = {
+  id: string;
+  customer: string;
+  stato: string;
+  created_at: string;
+};
 
 export default function App() {
-  const [user, setUser] = useState<{ id: string; role: string } | null>(null);
-  const [id, setId] = useState("");
-  const [pass, setPass] = useState("");
+  const [role, setRole] = useState<"showroom" | "magazzino" | null>(null);
+  const [user, setUser] = useState<string>("");
+  const [password, setPassword] = useState<string>("");
+  const [logged, setLogged] = useState(false);
+
   const [stock, setStock] = useState<StockRow[]>([]);
-  const [carrello, setCarrello] = useState<CartRow[]>([]);
-  const [ordini, setOrdini] = useState<any[]>([]);
-  const [viewMode, setViewMode] = useState<"griglia" | "lista">("griglia");
-  const [search, setSearch] = useState("");
-  const [filtroCategoria, setFiltroCategoria] = useState("");
-  const [cliente, setCliente] = useState("");
-  const [sconto, setSconto] = useState(0);
+  const [cart, setCart] = useState<CartRow[]>([]);
+  const [customer, setCustomer] = useState<string>("");
+  const [sconto, setSconto] = useState<number>(0);
 
-  // --- login ---
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [orderLines, setOrderLines] = useState<Record<string, CartRow[]>>({});
+
+  // Login
   const handleLogin = () => {
-    const u = USERS.find((u) => u.id === id && u.pass === pass);
-    if (u) setUser({ id: u.id, role: u.role });
-    else alert("Credenziali errate");
+    if (user === "Mars3loBo" && password === "Francesco01") {
+      setRole("showroom");
+      setLogged(true);
+    } else if (user === "Mars3loNa" && password === "Gbesse01") {
+      setRole("magazzino");
+      setLogged(true);
+    } else {
+      alert("Credenziali errate");
+    }
   };
 
-  // --- load stock ---
+  // Load stock from Supabase
+  const loadStock = async () => {
+    const { data } = await supabase.from("stock").select("*");
+    if (data) setStock(data as StockRow[]);
+  };
+
+  // Load orders (for magazzino)
+  const loadOrders = async () => {
+    const { data } = await supabase.from("orders").select("*").order("created_at", { ascending: false });
+    if (data) setOrders(data as Order[]);
+    for (const ord of data || []) {
+      const { data: righe } = await supabase.from("order_lines").select("*").eq("order_id", ord.id);
+      setOrderLines(prev => ({ ...prev, [ord.id]: righe as any }));
+    }
+  };
+
   useEffect(() => {
-    if (!user) return;
-    const fetchStock = async () => {
-      const { data, error } = await supabase.from("stock").select("*");
-      if (!error && data) setStock(data as StockRow[]);
-    };
-    fetchStock();
+    if (logged) {
+      loadStock();
+      if (role === "magazzino") loadOrders();
+      // Realtime
+      const channel = supabase.channel("realtime:all");
+      channel.on("postgres_changes", { event: "*", schema: "public", table: "stock" }, loadStock);
+      channel.on("postgres_changes", { event: "*", schema: "public", table: "orders" }, loadOrders);
+      channel.on("postgres_changes", { event: "*", schema: "public", table: "order_lines" }, loadOrders);
+      channel.subscribe();
+    }
+  }, [logged]);
 
-    // realtime stock
-    const ch = supabase
-      .channel("stock-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "stock" }, (p) => {
-        fetchStock();
-      })
-      .subscribe();
-    return () => {
-      supabase.removeChannel(ch);
-    };
-  }, [user]);
-
-  // --- load ordini (solo magazzino) ---
-  useEffect(() => {
-    if (!user || user.role !== "magazzino") return;
-    const fetchOrdini = async () => {
-      const { data, error } = await supabase.from("orders").select("*, order_lines(*)").order("created_at", { ascending: false });
-      if (!error && data) setOrdini(data);
-    };
-    fetchOrdini();
-
-    const ch = supabase
-      .channel("orders-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => fetchOrdini())
-      .on("postgres_changes", { event: "*", schema: "public", table: "order_lines" }, () => fetchOrdini())
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(ch);
-    };
-  }, [user]);
-
-  // --- aggiungi al carrello ---
-  const addToCart = (r: CartRow) => {
-    setCarrello((prev) => {
-      const idx = prev.findIndex((x) => x.sku === r.sku);
-      if (idx >= 0) {
-        const clone = [...prev];
-        clone[idx].richiesti += r.richiesti;
-        return clone;
+  // Aggiungi articolo da griglia
+  const addGroupToCart = (righe: StockRow[]) => {
+    const newCart = cart.filter(c => !righe.some(r => r.articolo === c.articolo && r.colore === c.colore));
+    const toAdd: CartRow[] = [];
+    righe.forEach(r => {
+      const el = document.getElementById(`qty-${r.sku}`) as HTMLInputElement;
+      const val = parseInt(el?.value || "0");
+      if (val > 0) {
+        toAdd.push({
+          sku: r.sku,
+          articolo: r.articolo,
+          colore: r.colore,
+          taglia: r.taglia,
+          richiesti: val,
+          prezzo: r.prezzo,
+        });
       }
-      return [...prev, r];
     });
+    setCart([...newCart, ...toAdd]);
   };
 
-  const removeFromCart = (sku: string) => {
-    setCarrello((prev) => prev.filter((r) => r.sku !== sku));
+  // Svuota gruppo dal carrello
+  const clearGroup = (righe: StockRow[]) => {
+    const newCart = cart.filter(c => !righe.some(r => r.articolo === c.articolo && r.colore === c.colore));
+    setCart(newCart);
   };
-  const clearCart = () => setCarrello([]);
 
-  // --- invia ordine showroom ---
-  const inviaOrdine = async () => {
-    if (!cliente) {
-      alert("Inserisci cliente");
-      return;
-    }
-    const orderId = Date.now().toString();
-    const { error } = await supabase.from("orders").insert([{ id: orderId, customer: cliente, stato: "In attesa" }]);
-    if (error) {
-      alert("Errore ordine");
-      return;
-    }
-    const righe = carrello.map((r) => ({
-      order_id: orderId,
+  // Totali
+  const totaleLordo = cart.reduce((sum, r) => sum + r.richiesti * r.prezzo, 0);
+  const totaleNetto = totaleLordo * (1 - sconto / 100);
+
+  // Invia ordine
+  const sendOrder = async () => {
+    const id = Date.now().toString();
+    await supabase.from("orders").insert([{ id, customer, stato: "In attesa" }]);
+    const rows = cart.map(r => ({
+      order_id: id,
       sku: r.sku,
       articolo: r.articolo,
-      taglia: r.taglia,
       colore: r.colore,
+      taglia: r.taglia,
       richiesti: r.richiesti,
       prezzo: r.prezzo,
     }));
-    await supabase.from("order_lines").insert(righe);
-    alert("Ordine inviato al Magazzino");
-    clearCart();
+    await supabase.from("order_lines").insert(rows);
+    setCart([]);
+    alert("Ordine inviato");
   };
 
-  // --- conferma magazzino ---
-  const confermaOrdine = async (orderId: string, righe: any[]) => {
+  // Conferma ordine (Magazzino)
+  const confirmOrder = async (ord: Order) => {
+    const righe = orderLines[ord.id] || [];
     for (const r of righe) {
-      const confermati = parseInt((document.getElementById(`conf-${r.id}`) as HTMLInputElement).value) || 0;
-      await supabase.from("order_lines").update({ confermati }).eq("id", r.id);
-      if (confermati > 0) {
-        await supabase.rpc("decrementa_stock", { p_sku: r.sku, p_qty: confermati });
+      const el = document.getElementById(`conf-${ord.id}-${r.sku}`) as HTMLInputElement;
+      const val = parseInt(el?.value || "0");
+      await supabase.from("order_lines").update({ confermati: val }).eq("id", r.id);
+      if (val > 0) {
+        // Scala stock
+        await supabase.rpc("decrementa_stock", { p_sku: r.sku, p_qty: val });
       }
     }
-    await supabase.from("orders").update({ stato: "Confermato" }).eq("id", orderId);
+    await supabase.from("orders").update({ stato: "Confermato" }).eq("id", ord.id);
+    alert("Ordine confermato");
   };
 
-  // --- export PDF ---
+  // Export PDF
   const exportPDF = () => {
     const doc = new jsPDF();
-    doc.text("Ordine cliente: " + cliente, 10, 10);
-    const rows = carrello.map((r) => [r.articolo, r.colore, r.taglia, r.richiesti, r.prezzo.toFixed(2), (r.richiesti * r.prezzo).toFixed(2)]);
-    autoTable(doc, { head: [["Articolo", "Colore", "Taglia", "Qta", "Prezzo", "Totale"]], body: rows });
+    doc.text(`Ordine cliente: ${customer}`, 10, 10);
+    autoTable(doc, {
+      head: [["Articolo", "Colore", "Taglia", "Quantità", "Prezzo", "Totale"]],
+      body: cart.map(r => [r.articolo, r.colore, r.taglia, r.richiesti, r.prezzo, r.richiesti * r.prezzo]),
+    });
+    doc.text(`Totale: €${totaleNetto.toFixed(2)}`, 10, 280);
     doc.save("ordine.pdf");
   };
 
-  // --- export Excel ---
+  // Export Excel
   const exportExcel = () => {
-    const ws = XLSX.utils.json_to_sheet(carrello);
+    const ws = XLSX.utils.json_to_sheet(cart);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Ordine");
     XLSX.writeFile(wb, "ordine.xlsx");
   };
 
-  // --- filtro stock ---
-  const stockFiltrato = stock.filter((r) => {
-    if (filtroCategoria && r.categoria !== filtroCategoria) return false;
-    if (search && !r.articolo.toLowerCase().includes(search.toLowerCase()) && !r.sku.toLowerCase().includes(search.toLowerCase()))
-      return false;
-    return true;
-  });
+  // Export CSV
+  const exportCSV = () => {
+    const ws = XLSX.utils.json_to_sheet(cart);
+    const csv = XLSX.utils.sheet_to_csv(ws);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    saveAs(blob, "ordine.csv");
+  };
 
-  // --- login page ---
-  if (!user)
+  if (!logged) {
     return (
-      <div className="h-screen flex items-center justify-center bg-black text-white">
-        <div className="text-center">
-          <img src="/public/mars3lo.png" alt="Mars3lo Logo" className="mx-auto w-32 mb-4" />
-          <h1 className="text-2xl mb-4">Accesso Mars3lo</h1>
-          <input className="border p-2 text-black mb-2" placeholder="ID" value={id} onChange={(e) => setId(e.target.value)} />
-          <br />
-          <input
-            className="border p-2 text-black mb-2"
-            placeholder="Password"
-            type="password"
-            value={pass}
-            onChange={(e) => setPass(e.target.value)}
-          />
-          <br />
-          <button className="bg-white text-black px-4 py-2 rounded" onClick={handleLogin}>
-            Entra
-          </button>
+      <div className="h-screen flex flex-col items-center justify-center bg-black text-white">
+        <img src="/mars3lo.png" className="w-40 mb-6" />
+        <div className="bg-gray-900 p-6 rounded-xl">
+          <h1 className="text-xl mb-4 text-center">Login</h1>
+          <input className="mb-2 p-2 w-64 text-black" placeholder="ID" value={user} onChange={e => setUser(e.target.value)} />
+          <input className="mb-2 p-2 w-64 text-black" placeholder="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} />
+          <button onClick={handleLogin} className="w-64 bg-white text-black py-2 rounded">Entra</button>
         </div>
       </div>
     );
+  }
 
-  // --- showroom ---
-  if (user.role === "showroom")
+  // --- SHOWROOM ---
+  if (role === "showroom") {
+    const gruppi = Object.values(
+      stock.reduce((acc: any, r) => {
+        const key = r.articolo + "|" + r.colore;
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(r);
+        return acc;
+      }, {})
+    );
+
     return (
       <div className="p-4">
-        <header className="flex justify-between items-center mb-4">
-          <img src="/public/mars3lo.png" alt="Logo" className="w-28" />
-          <h1 className="text-xl font-bold">Showroom Centergross</h1>
-        </header>
-        <div className="flex gap-2 mb-4">
-          <input className="border p-2" placeholder="Cliente" value={cliente} onChange={(e) => setCliente(e.target.value)} />
-          <input
-            className="border p-2 w-20"
-            type="number"
-            value={sconto}
-            onChange={(e) => setSconto(parseInt(e.target.value) || 0)}
-            placeholder="Sconto %"
-          />
-          <input className="border p-2 flex-1" placeholder="Cerca..." value={search} onChange={(e) => setSearch(e.target.value)} />
-          <select className="border p-2" value={filtroCategoria} onChange={(e) => setFiltroCategoria(e.target.value)}>
-            <option value="">Tutte</option>
-            {Object.entries(CATEGORIE_LABELS).map(([k, v]) => (
-              <option key={k} value={k}>
-                {v}
-              </option>
-            ))}
-          </select>
-          <button className="border px-2" onClick={() => setViewMode(viewMode === "griglia" ? "lista" : "griglia")}>
-            {viewMode === "griglia" ? "Lista" : "Griglia"}
-          </button>
-        </div>
-
-        {viewMode === "lista" ? (
-          <table className="w-full border">
-            <thead>
-              <tr className="bg-gray-100">
-                <th>Articolo</th>
-                <th>Categoria</th>
-                <th>Colore</th>
-                <th>Taglia</th>
-                <th>Qta disp</th>
-                <th>Prezzo</th>
-                <th>Azione</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stockFiltrato.map((r) => (
-                <tr key={r.sku} className="border-t">
-                  <td>{r.articolo}</td>
-                  <td>{CATEGORIE_LABELS[r.categoria] || r.categoria}</td>
-                  <td>{r.colore}</td>
-                  <td>{r.taglia}</td>
-                  <td>{r.qty}</td>
-                  <td>€ {r.prezzo.toFixed(2)}</td>
-                  <td>
-                    <button className="bg-black text-white px-2 py-1 rounded" onClick={() => addToCart({ ...r, richiesti: 1 })}>
-                      Aggiungi
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <div>
-            {Object.values(
-              stockFiltrato.reduce((acc: any, r) => {
-                const key = r.articolo + "-" + r.colore;
-                if (!acc[key]) acc[key] = [];
-                acc[key].push(r);
-                return acc;
-              }, {})
-            ).map((righe: StockRow[], idx) => (
-              <table key={idx} className="w-full border mb-4">
+        <h1 className="text-2xl font-bold mb-4">Showroom Centergross</h1>
+        <input className="border p-2 mb-2 w-64" placeholder="Cliente" value={customer} onChange={e => setCustomer(e.target.value)} />
+        <div className="grid gap-6">
+          {gruppi.map((righe: StockRow[]) => (
+            <div key={righe[0].articolo + righe[0].colore} className="border p-3 rounded-xl">
+              <h2 className="font-bold text-lg text-left">{righe[0].articolo} {classify(righe[0].articolo)} – <span className="font-bold">{righe[0].colore}</span></h2>
+              <table className="w-full text-left">
                 <thead>
-                  <tr className="bg-gray-100">
-                    <th colSpan={righe.length}>
-                      {righe[0].articolo} {CATEGORIE_LABELS[righe[0].categoria] || righe[0].categoria} —{" "}
-                      <span className="font-bold">{righe[0].colore}</span> (Prezzo: € {righe[0].prezzo.toFixed(2)})
-                    </th>
-                  </tr>
                   <tr>
-                    {righe.map((r) => (
-                      <th key={r.sku}>{r.taglia}</th>
-                    ))}
+                    {righe.map(r => <th key={r.sku}>{r.taglia}</th>)}
                   </tr>
                 </thead>
                 <tbody>
                   <tr>
-                    {righe.map((r) => (
-                      <td key={r.sku} className="text-center">
-                        {r.qty}
-                        <br />
-                        <input id={`qty-${r.sku}`} type="number" min={0} max={r.qty} className="border w-12" />
+                    {righe.map(r => (
+                      <td key={r.sku}>
+                        <input id={`qty-${r.sku}`} type="number" min={0} max={r.qty} className="w-16 border p-1" />
                       </td>
                     ))}
                   </tr>
-                  <tr>
-                    <td colSpan={righe.length} className="text-right">
-                      <button
-                        className="bg-black text-white px-3 py-1 rounded"
-                        onClick={() => {
-                          righe.forEach((r) => {
-                            const val = parseInt((document.getElementById(`qty-${r.sku}`) as HTMLInputElement)?.value || "0");
-                            if (val > 0) addToCart({ ...r, richiesti: val });
-                          });
-                        }}
-                      >
-                        Aggiungi tutte
-                      </button>
-                    </td>
-                  </tr>
                 </tbody>
               </table>
-            ))}
-          </div>
-        )}
+              <div className="mt-2 flex gap-2">
+                <button onClick={() => addGroupToCart(righe)} className="bg-black text-white px-3 py-1 rounded">Aggiungi</button>
+                <button onClick={() => clearGroup(righe)} className="bg-red-500 text-white px-3 py-1 rounded">Svuota</button>
+              </div>
+            </div>
+          ))}
+        </div>
 
-        {/* Carrello */}
-        <h2 className="text-lg font-bold mt-6">Carrello</h2>
-        <table className="w-full border mb-2">
+        <h2 className="text-xl font-bold mt-6">Carrello</h2>
+        <table className="w-full text-left border mt-2">
           <thead>
-            <tr className="bg-gray-100">
-              <th>Articolo</th>
-              <th>Colore</th>
-              <th>Taglia</th>
-              <th>Qta</th>
-              <th>Prezzo</th>
-              <th>Totale</th>
-              <th></th>
+            <tr>
+              <th>Articolo</th><th>Colore</th><th>Taglia</th><th>Qty</th><th>Prezzo</th><th>Totale</th>
             </tr>
           </thead>
           <tbody>
-            {carrello.map((r, i) => (
-              <tr key={i} className="border-t">
-                <td>{r.articolo}</td>
-                <td>{r.colore}</td>
-                <td>{r.taglia}</td>
-                <td>{r.richiesti}</td>
-                <td>€ {r.prezzo.toFixed(2)}</td>
-                <td>€ {(r.richiesti * r.prezzo).toFixed(2)}</td>
-                <td>
-                  <button onClick={() => removeFromCart(r.sku)} className="text-red-500">
-                    ❌
-                  </button>
-                </td>
+            {cart.map((c, i) => (
+              <tr key={i}>
+                <td>{c.articolo}</td><td>{c.colore}</td><td>{c.taglia}</td>
+                <td>{c.richiesti}</td><td>{c.prezzo}</td><td>{c.richiesti * c.prezzo}</td>
               </tr>
             ))}
           </tbody>
         </table>
-        <div className="flex gap-2 mb-4">
-          <button className="bg-red-500 text-white px-3 py-1 rounded" onClick={clearCart}>
-            Svuota tutto
-          </button>
-          <button className="bg-green-600 text-white px-3 py-1 rounded" onClick={inviaOrdine}>
-            Invia ordine
-          </button>
-          <button className="bg-blue-500 text-white px-3 py-1 rounded" onClick={exportPDF}>
-            PDF
-          </button>
-          <button className="bg-yellow-500 text-black px-3 py-1 rounded" onClick={exportExcel}>
-            Excel
-          </button>
+        <div className="mt-4">
+          <input type="number" className="border p-2 w-24" value={sconto} onChange={e => setSconto(parseInt(e.target.value) || 0)} /> % Sconto
+          <p className="mt-2">Totale netto: €{totaleNetto.toFixed(2)}</p>
+        </div>
+        <div className="flex gap-2 mt-4">
+          <button onClick={sendOrder} className="bg-green-600 text-white px-4 py-2 rounded">Invia ordine</button>
+          <button onClick={exportPDF} className="bg-gray-800 text-white px-4 py-2 rounded">PDF</button>
+          <button onClick={exportExcel} className="bg-gray-800 text-white px-4 py-2 rounded">Excel</button>
+          <button onClick={exportCSV} className="bg-gray-800 text-white px-4 py-2 rounded">CSV</button>
         </div>
       </div>
     );
+  }
 
-  // --- magazzino ---
-  if (user.role === "magazzino")
+  // --- MAGAZZINO ---
+  if (role === "magazzino") {
     return (
       <div className="p-4">
-        <header className="flex justify-between items-center mb-4">
-          <img src="/public/mars3lo.png" alt="Logo" className="w-28" />
-          <h1 className="text-xl font-bold">Magazzino Napoli</h1>
-        </header>
-        <h2 className="text-lg font-bold">Ordini ricevuti</h2>
-        {ordini.map((o) => (
-          <div key={o.id} className="border p-2 mb-4">
-            <h3 className="font-bold">
-              Cliente: {o.customer} — Stato: {o.stato}
-            </h3>
-            <table className="w-full border mb-2">
+        <h1 className="text-2xl font-bold mb-4">Magazzino Napoli</h1>
+        {orders.map(ord => (
+          <div key={ord.id} className="border p-4 mb-4 rounded-xl">
+            <h2 className="font-bold mb-2">Ordine {ord.id} – {ord.customer} – {ord.stato}</h2>
+            <table className="w-full text-left border">
               <thead>
-                <tr className="bg-gray-100">
-                  <th>Articolo</th>
-                  <th>Colore</th>
-                  <th>Taglia</th>
-                  <th>Richiesti</th>
-                  <th>Confermati</th>
-                </tr>
+                <tr><th>Articolo</th><th>Colore</th><th>Taglia</th><th>Richiesti</th><th>Confermati</th></tr>
               </thead>
               <tbody>
-                {o.order_lines.map((r: any) => (
-                  <tr key={r.id} className="border-t">
-                    <td>{r.articolo}</td>
-                    <td>{r.colore}</td>
-                    <td>{r.taglia}</td>
+                {(orderLines[ord.id] || []).map((r: any) => (
+                  <tr key={r.id}>
+                    <td>{r.articolo}</td><td>{r.colore}</td><td>{r.taglia}</td>
                     <td>{r.richiesti}</td>
-                    <td>
-                      <input id={`conf-${r.id}`} type="number" min={0} max={r.richiesti} defaultValue={r.richiesti} className="border w-16" />
-                    </td>
+                    <td><input id={`conf-${ord.id}-${r.sku}`} type="number" defaultValue={r.richiesti} className="w-16 border p-1" /></td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <button className="bg-green-600 text-white px-3 py-1 rounded" onClick={() => confermaOrdine(o.id, o.order_lines)}>
-              Conferma ordine
-            </button>
+            <button onClick={() => confirmOrder(ord)} className="mt-2 bg-green-600 text-white px-4 py-1 rounded">Conferma ordine</button>
           </div>
         ))}
       </div>
     );
+  }
 
   return null;
 }
