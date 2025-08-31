@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-// 🔑 Supabase
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// 🔑 Config Supabase dalle ENV
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL!,
+  import.meta.env.VITE_SUPABASE_ANON_KEY!
+);
 
 // 📌 Tipi
+type Role = "login" | "showroom" | "magazzino";
+
 interface StockItem {
   sku: string;
   articolo: string;
@@ -18,66 +21,66 @@ interface StockItem {
 }
 
 interface OrderLine {
-  id?: number;
-  order_id?: string;
   sku: string;
   articolo: string;
   taglia: string;
   colore: string;
   richiesti: number;
-  confermati?: number;
   prezzo: number;
 }
 
-interface Order {
-  id: string;
-  created_at?: string;
-  customer: string;
-  stato: string;
-  lines?: OrderLine[];
-}
+// 📌 Login Screen
+function LoginScreen({ onLogin }: { onLogin: (id: string, pw: string) => void }) {
+  const [id, setId] = useState("");
+  const [pw, setPw] = useState("");
 
-// 📌 Classificazione articoli
-function classify(sku: string): string {
-  const code = sku.toUpperCase();
-  if (code.startsWith("G") && !code.startsWith("GB")) return "GIACCA";
-  if (code.startsWith("GB")) return "GIUBBOTTO";
-  if (code.startsWith("MG")) return "MAGLIA";
-  if (code.startsWith("P") && !code.startsWith("PM")) return "PANTALONE";
-  if (code.startsWith("PM")) return "PANTALONI FELPA";
-  if (code.startsWith("C")) return "CAMICIA";
-  return "ALTRO";
+  return (
+    <div className="flex items-center justify-center h-screen bg-black">
+      <div className="bg-gray-900 p-8 rounded-lg shadow-lg w-96 text-center">
+        <img
+          src="/public/mars3lo.png"
+          alt="Mars3lo"
+          className="mx-auto mb-4 h-20"
+        />
+        <h2 className="text-white text-xl mb-6">Accedi</h2>
+        <input
+          placeholder="ID"
+          value={id}
+          onChange={(e) => setId(e.target.value)}
+          className="mb-3 w-full p-2 rounded"
+        />
+        <input
+          type="password"
+          placeholder="Password"
+          value={pw}
+          onChange={(e) => setPw(e.target.value)}
+          className="mb-3 w-full p-2 rounded"
+        />
+        <button
+          onClick={() => onLogin(id, pw)}
+          className="bg-white px-4 py-2 rounded text-black font-bold w-full"
+        >
+          Login
+        </button>
+      </div>
+    </div>
+  );
 }
 
 // 📌 App principale
 export default function App() {
-  const [role, setRole] = useState<"login" | "showroom" | "magazzino" | null>("login");
+  const [role, setRole] = useState<Role>("login");
   const [stock, setStock] = useState<StockItem[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [customer, setCustomer] = useState("");
+  const [order, setOrder] = useState<OrderLine[]>([]);
+  const [cliente, setCliente] = useState("");
   const [sconto, setSconto] = useState(0);
-  const [cart, setCart] = useState<OrderLine[]>([]);
-  const [search, setSearch] = useState("");
 
-  // 🔹 Carica stock da Supabase
+  // 🔍 Debug
   useEffect(() => {
-    if (role === "showroom" || role === "magazzino") {
-      loadStock();
-      loadOrders();
-    }
+    console.log("Ruolo attuale:", role);
   }, [role]);
 
-  async function loadStock() {
-    const { data } = await supabase.from("stock").select("*");
-    setStock(data as StockItem[]);
-  }
-
-  async function loadOrders() {
-    const { data } = await supabase.from("orders").select("*, order_lines(*)").order("created_at", { ascending: false });
-    setOrders(data as any);
-  }
-
-  // 🔹 Login
+  // 📌 Login check
   const handleLogin = (id: string, pw: string) => {
     if (id === "Mars3loBo" && pw === "Francesco01") {
       setRole("showroom");
@@ -88,198 +91,174 @@ export default function App() {
     }
   };
 
-  // 🔹 Aggiungi al carrello
-  const addToCart = (group: StockItem[], values: Record<string, number>) => {
-    const lines: OrderLine[] = [];
-    for (const g of group) {
-      const qty = values[g.taglia] || 0;
-      if (qty > 0) {
-        lines.push({
-          sku: g.sku,
-          articolo: g.articolo,
-          taglia: g.taglia,
-          colore: g.colore,
-          richiesti: qty,
-          prezzo: g.prezzo,
-        });
-      }
-    }
-    if (lines.length > 0) setCart([...cart, ...lines]);
+  // 📌 MOCK dati stock (poi arriva da Supabase)
+  useEffect(() => {
+    setStock([
+      {
+        sku: "G23250-46-BLU",
+        articolo: "G23250 GIACCA",
+        categoria: "GIACCHE",
+        taglia: "46",
+        colore: "BLU",
+        qty: 10,
+        prezzo: 120,
+      },
+      {
+        sku: "G23250-48-BLU",
+        articolo: "G23250 GIACCA",
+        categoria: "GIACCHE",
+        taglia: "48",
+        colore: "BLU",
+        qty: 5,
+        prezzo: 120,
+      },
+    ]);
+  }, []);
+
+  // 📌 Funzioni ordini
+  const aggiungiRiga = (item: StockItem, qty: number) => {
+    if (qty <= 0) return;
+    setOrder((prev) => [
+      ...prev.filter((o) => o.sku !== item.sku),
+      {
+        sku: item.sku,
+        articolo: item.articolo,
+        taglia: item.taglia,
+        colore: item.colore,
+        richiesti: qty,
+        prezzo: item.prezzo,
+      },
+    ]);
   };
 
-  const clearGroup = (articolo: string, colore: string) => {
-    setCart(cart.filter((c) => !(c.articolo === articolo && c.colore === colore)));
-  };
+  const svuotaOrdine = () => setOrder([]);
 
-  // 🔹 Invia ordine
-  const sendOrder = async () => {
-    if (!customer || cart.length === 0) return alert("Inserisci cliente e articoli");
-    const orderId = crypto.randomUUID();
-    const { error } = await supabase.from("orders").insert([{ id: orderId, customer, stato: "In attesa" }]);
-    if (error) return alert("Errore ordine");
-
-    const lines = cart.map((c) => ({ ...c, order_id: orderId }));
-    await supabase.from("order_lines").insert(lines);
-    setCart([]);
-    alert("Ordine inviato!");
-    loadOrders();
-  };
-
-  // 🔹 Conferma ordine
-  const confirmOrder = async (order: Order, conferme: Record<number, number>) => {
-    for (const line of order.lines || []) {
-      const qtyConf = conferme[line.id!] ?? 0;
-      await supabase.from("order_lines").update({ confermati: qtyConf }).eq("id", line.id!);
-      await supabase.rpc("decrementa_stock", { p_sku: line.sku, p_qty: qtyConf });
-    }
-    await supabase.from("orders").update({ stato: "Confermato" }).eq("id", order.id);
-    loadOrders();
-    loadStock();
-  };
-
-  const annullaOrder = async (orderId: string) => {
-    await supabase.from("orders").update({ stato: "Annullato" }).eq("id", orderId);
-    loadOrders();
-  };
-
-  // 📌 Login page
-  if (role === "login") {
-    const [id, setId] = useState("");
-    const [pw, setPw] = useState("");
-    return (
-      <div className="flex items-center justify-center h-screen bg-black text-white">
-        <div className="bg-gray-900 p-8 rounded shadow-md w-80 text-center">
-          <img src="/public/mars3lo.png" alt="Mars3lo" className="h-12 mx-auto mb-4" />
-          <h1 className="text-xl font-bold mb-4">Accesso</h1>
-          <input value={id} onChange={(e) => setId(e.target.value)} placeholder="ID" className="border p-2 mb-2 w-full text-black" />
-          <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Password" className="border p-2 mb-4 w-full text-black" />
-          <button onClick={() => handleLogin(id, pw)} className="bg-green-600 text-white px-4 py-2 rounded w-full">Login</button>
-        </div>
-      </div>
-    );
-  }
-
-  // 📌 Showroom
+  // 📌 Showroom UI
   if (role === "showroom") {
-    const grouped = stock.reduce((acc: Record<string, StockItem[]>, item) => {
-      const key = item.articolo + "_" + item.colore;
-      acc[key] = acc[key] || [];
-      acc[key].push(item);
-      return acc;
-    }, {});
+    const totale = order.reduce((sum, o) => sum + o.richiesti * o.prezzo, 0);
+    const totaleScontato = totale * (1 - sconto / 100);
 
     return (
       <div className="p-4">
-        <h1 className="text-2xl font-bold mb-4">Showroom Centergross</h1>
-        <div className="flex gap-4 mb-4">
-          <input placeholder="Cliente" value={customer} onChange={(e) => setCustomer(e.target.value)} className="border p-2" />
-          <input type="number" placeholder="Sconto %" value={sconto} onChange={(e) => setSconto(Number(e.target.value))} className="border p-2 w-24" />
-          <input placeholder="Cerca codice o colore" value={search} onChange={(e) => setSearch(e.target.value)} className="border p-2 flex-1" />
+        <div className="flex justify-between items-center mb-4">
+          <h1 className="text-xl font-bold">Showroom Centergross</h1>
+          <div>
+            Cliente:{" "}
+            <input
+              value={cliente}
+              onChange={(e) => setCliente(e.target.value)}
+              className="border p-1 mr-2"
+            />
+            Sconto:{" "}
+            <input
+              type="number"
+              value={sconto}
+              onChange={(e) => setSconto(Number(e.target.value))}
+              className="border p-1 w-16"
+            />{" "}
+            %
+          </div>
         </div>
 
-        {Object.values(grouped)
-          .filter((g) =>
-            g[0].articolo.toLowerCase().includes(search.toLowerCase()) ||
-            g[0].colore.toLowerCase().includes(search.toLowerCase())
-          )
-          .map((group) => (
-            <GroupRow key={group[0].sku} group={group} addToCart={addToCart} clearGroup={clearGroup} />
-          ))}
-
-        <h2 className="text-xl font-bold mt-6">Carrello</h2>
-        <table className="w-full border">
+        <table className="w-full border mb-4">
           <thead>
             <tr className="bg-gray-200">
-              <th>Articolo</th><th>Taglia</th><th>Colore</th><th>Q.tà</th><th>Prezzo</th><th>Totale</th>
+              <th>Articolo</th>
+              <th>Taglia</th>
+              <th>Colore</th>
+              <th>Disponibili</th>
+              <th>Prezzo</th>
+              <th>Ordina</th>
             </tr>
           </thead>
           <tbody>
-            {cart.map((c, i) => (
-              <tr key={i} className="border-t">
-                <td>{c.articolo}</td>
-                <td>{c.taglia}</td>
-                <td>{c.colore}</td>
-                <td>{c.richiesti}</td>
-                <td>€ {c.prezzo.toFixed(2)}</td>
-                <td>€ {(c.prezzo * c.richiesti).toFixed(2)}</td>
+            {stock.map((s) => (
+              <tr key={s.sku} className="border-b">
+                <td>{s.articolo}</td>
+                <td>{s.taglia}</td>
+                <td>{s.colore}</td>
+                <td>{s.qty}</td>
+                <td>€{s.prezzo}</td>
+                <td>
+                  <input
+                    type="number"
+                    min={0}
+                    max={s.qty}
+                    className="w-16 border"
+                    onChange={(e) =>
+                      aggiungiRiga(s, parseInt(e.target.value) || 0)
+                    }
+                  />
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
-        <div className="mt-4">
-          Totale Lordo: € {cart.reduce((sum, c) => sum + c.prezzo * c.richiesti, 0).toFixed(2)} <br />
-          Sconto: {sconto}% <br />
-          Totale Imponibile: € {(cart.reduce((sum, c) => sum + c.prezzo * c.richiesti, 0) * (1 - sconto / 100)).toFixed(2)}
+
+        <h2 className="text-lg font-bold mb-2">Ordine</h2>
+        <table className="w-full border mb-4">
+          <thead>
+            <tr className="bg-gray-200">
+              <th>Articolo</th>
+              <th>Taglia</th>
+              <th>Colore</th>
+              <th>Q.tà</th>
+              <th>Prezzo</th>
+              <th>Totale</th>
+            </tr>
+          </thead>
+          <tbody>
+            {order.map((o) => (
+              <tr key={o.sku} className="border-b">
+                <td>{o.articolo}</td>
+                <td>{o.taglia}</td>
+                <td>{o.colore}</td>
+                <td>{o.richiesti}</td>
+                <td>€{o.prezzo}</td>
+                <td>€{o.richiesti * o.prezzo}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="font-bold">
+          Totale: €{totale} <br />
+          Totale scontato: €{totaleScontato}
         </div>
-        <button onClick={sendOrder} className="bg-blue-600 text-white px-4 py-2 mt-4 rounded">Invia ordine</button>
+        <button
+          onClick={svuotaOrdine}
+          className="mt-4 bg-red-500 text-white px-4 py-2 rounded"
+        >
+          Svuota Ordine
+        </button>
       </div>
     );
   }
 
-  // 📌 Magazzino
+  // 📌 Magazzino UI
   if (role === "magazzino") {
     return (
       <div>
-        <header className="bg-black h-20 flex flex-col items-center justify-center mb-4">
-          <img src="/public/mars3lo.png" alt="Mars3lo" className="h-10 mb-1" />
-          <span className="text-white font-bold tracking-wide">MARS3LO B2B</span>
-        </header>
+        <div className="bg-black text-white p-4 flex justify-center items-center">
+          <img src="/public/mars3lo.png" alt="logo" className="h-10 mr-4" />
+          <span className="font-bold text-xl">MARS3LO B2B</span>
+        </div>
         <div className="p-4">
-          <h1 className="text-2xl font-bold mb-4">Ordini ricevuti</h1>
-          {orders.map((o) => (
-            <div key={o.id} className="border p-2 mb-2">
-              <div className="font-bold">{o.customer} – {o.stato}</div>
-              <table className="w-full border mt-2">
-                <thead>
-                  <tr className="bg-gray-200"><th>Articolo</th><th>Taglia</th><th>Colore</th><th>Richiesti</th><th>Confermati</th></tr>
-                </thead>
-                <tbody>
-                  {o.lines?.map((l) => (
-                    <tr key={l.id} className="border-t">
-                      <td>{l.articolo}</td>
-                      <td>{l.taglia}</td>
-                      <td>{l.colore}</td>
-                      <td>{l.richiesti}</td>
-                      <td><input type="number" defaultValue={l.richiesti} className="border w-16" /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="flex gap-2 mt-2">
-                <button onClick={() => confirmOrder(o, {})} className="bg-green-600 text-white px-3 py-1 rounded">Conferma</button>
-                <button onClick={() => annullaOrder(o.id)} className="bg-red-600 text-white px-3 py-1 rounded">Annulla</button>
-              </div>
-            </div>
-          ))}
+          <h1 className="text-xl font-bold mb-4">MAGAZZINO Napoli</h1>
+          <p>Qui vedrai gli ordini in arrivo dallo showroom (da collegare a Supabase).</p>
         </div>
       </div>
     );
   }
 
-  // 📌 Fallback
-  return <div className="text-center text-red-600 p-10">Errore: nessuna pagina caricata</div>;
-}
+  // 📌 Login di default
+  if (role === "login") {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
 
-// 🔹 Componenti di supporto
-function GroupRow({ group, addToCart, clearGroup }: { group: StockItem[]; addToCart: Function; clearGroup: Function }) {
-  const [values, setValues] = useState<Record<string, number>>({});
-  const g0 = group[0];
+  // 📌 Fallback
   return (
-    <div className="border p-2 mb-2">
-      <div className="font-bold">{g0.articolo} – {classify(g0.sku)} – {g0.colore} – Prezzo € {g0.prezzo}</div>
-      <div className="flex flex-wrap gap-2 mt-2">
-        {group.map((s) => (
-          <div key={s.taglia} className="border p-2 text-center">
-            <div>{s.taglia}</div>
-            <div className="text-xs text-gray-500">Disp: {s.qty}</div>
-            <input type="number" min={0} max={s.qty} defaultValue={0} onChange={(e) => setValues({ ...values, [s.taglia]: Number(e.target.value) })} className="border w-16" />
-          </div>
-        ))}
-      </div>
-      <div className="flex gap-2 mt-2">
-        <button onClick={() => addToCart(group, values)} className="bg-green-600 text-white px-3 py-1 rounded">Aggiungi</button>
-        <button onClick={() => clearGroup(g0.articolo, g0.colore)} className="bg-gray-500 text-white px-3 py-1 rounded">Svuota</button>
-      </div>
+    <div className="p-10 text-center text-red-600">
+      Errore: ruolo sconosciuto ({role})
     </div>
   );
 }
