@@ -323,3 +323,4 @@ function groupByArticle(stock: Stock[]) {
     return acc;
   }, {});
 }
+
