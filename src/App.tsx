@@ -5,7 +5,7 @@ import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 
-// ✅ Supabase
+// ✅ Supabase client
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL!,
   import.meta.env.VITE_SUPABASE_ANON_KEY!
@@ -38,21 +38,23 @@ type OrderLine = {
 };
 
 export default function App() {
-  // Stato login
+  // --- Stato login
   const [role, setRole] = useState<"showroom" | "magazzino" | null>(null);
   const [loggedIn, setLoggedIn] = useState(false);
+  const [id, setId] = useState("");
+  const [pw, setPw] = useState("");
 
-  // Stato stock e ordini
+  // --- Stato stock e ordini
   const [stock, setStock] = useState<StockRow[]>([]);
   const [carrello, setCarrello] = useState<OrderLine[]>([]);
   const [cliente, setCliente] = useState("");
   const [sconto, setSconto] = useState(0);
 
-  // UI
+  // --- UI
   const [view, setView] = useState<"griglia" | "lista">("griglia");
   const [categoriaFiltro, setCategoriaFiltro] = useState<string>("");
 
-  // Login
+  // --- Login
   const handleLogin = (id: string, pw: string) => {
     if (id === CREDENTIALS.showroom.id && pw === CREDENTIALS.showroom.pw) {
       setRole("showroom");
@@ -65,7 +67,7 @@ export default function App() {
     }
   };
 
-  // Carica stock da Supabase
+  // --- Carica stock da Supabase
   useEffect(() => {
     if (!loggedIn) return;
     const fetchStock = async () => {
@@ -86,17 +88,17 @@ export default function App() {
     };
   }, [loggedIn]);
 
-  // Aggiungi al carrello
+  // --- Carrello
   const addToCart = (line: OrderLine) => {
     if (line.richiesti <= 0) return;
     setCarrello((prev) => [...prev, line]);
   };
 
-  // Totali
+  // --- Totali
   const totaleLordo = carrello.reduce((sum, r) => sum + r.richiesti * r.prezzo, 0);
   const totaleImponibile = totaleLordo * (1 - sconto / 100);
 
-  // Export PDF
+  // --- Export PDF
   const exportPDF = () => {
     const doc = new jsPDF();
     doc.addImage("/public/mars3lo.png", "PNG", 10, 10, 40, 20);
@@ -122,7 +124,7 @@ export default function App() {
     doc.save(`ordine_${cliente}.pdf`);
   };
 
-  // Export Excel
+  // --- Export Excel
   const exportExcel = () => {
     const ws = XLSX.utils.json_to_sheet(
       carrello.map((r) => ({
@@ -141,7 +143,7 @@ export default function App() {
     saveAs(new Blob([wbout], { type: "application/octet-stream" }), `ordine_${cliente}.xlsx`);
   };
 
-  // Export CSV
+  // --- Export CSV
   const exportCSV = () => {
     const rows = [
       ["Cliente", "Articolo", "Colore", "Taglia", "Quantità", "Prezzo", "Totale"],
@@ -160,7 +162,7 @@ export default function App() {
     saveAs(blob, `ordine_${cliente}.csv`);
   };
 
-  // ✅ Raggruppa stock per articolo+colore
+  // --- Raggruppa stock per articolo+colore
   const groupByArticoloColore = () => {
     const groups: Record<string, StockRow[]> = {};
     stock
@@ -173,10 +175,8 @@ export default function App() {
     return groups;
   };
 
-  // --- RENDER LOGIN ---
+  // --- LOGIN SCREEN ---
   if (!loggedIn) {
-    const [id, setId] = useState("");
-    const [pw, setPw] = useState("");
     return (
       <div className="h-screen flex items-center justify-center bg-black text-white">
         <div className="text-center">
@@ -206,7 +206,7 @@ export default function App() {
     );
   }
 
-  // --- RENDER APP ---
+  // --- MAIN APP ---
   return (
     <div className="p-4">
       <header className="flex justify-between items-center mb-4">
@@ -259,7 +259,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* --- LISTA --- */}
+      {/* LISTA */}
       {view === "lista" ? (
         <table className="w-full border text-sm">
           <thead>
@@ -309,7 +309,7 @@ export default function App() {
           </tbody>
         </table>
       ) : (
-        /* --- GRIGLIA TAGLIE ORIZZONTALE --- */
+        /* GRIGLIA TAGLIE ORIZZONTALE */
         <div>
           {Object.entries(groupByArticoloColore()).map(([key, righe]) => (
             <div key={key} className="mb-6 border p-3">
@@ -364,7 +364,7 @@ export default function App() {
         </div>
       )}
 
-      {/* --- CARRELLO --- */}
+      {/* CARRELLO */}
       {role === "showroom" && (
         <div className="mt-6 border-t pt-4">
           <h2 className="text-xl mb-2">Carrello</h2>
@@ -387,29 +387,3 @@ export default function App() {
                   <td>{r.taglia}</td>
                   <td>{r.richiesti}</td>
                   <td>€ {r.prezzo.toFixed(2)}</td>
-                  <td>€ {(r.richiesti * r.prezzo).toFixed(2)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div className="mt-4">
-            <p>Totale Lordo: € {totaleLordo.toFixed(2)}</p>
-            <p>Sconto: {sconto}%</p>
-            <p className="font-bold">Totale Imponibile: € {totaleImponibile.toFixed(2)}</p>
-          </div>
-          <div className="mt-4 flex gap-2">
-            <button onClick={exportPDF} className="bg-red-500 text-white px-4 py-2 rounded">
-              Stampa PDF
-            </button>
-            <button onClick={exportExcel} className="bg-green-500 text-white px-4 py-2 rounded">
-              Esporta Excel
-            </button>
-            <button onClick={exportCSV} className="bg-blue-500 text-white px-4 py-2 rounded">
-              Esporta CSV
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
