@@ -1,15 +1,15 @@
 import React, { useState, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import * as XLSX from "xlsx";
 
-// 🔑 Config Supabase dalle ENV
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL!,
-  import.meta.env.VITE_SUPABASE_ANON_KEY!
-);
+// 🔑 Supabase keys (ambienti Vercel)
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL!;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY!;
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-// 📌 Tipi
-type Role = "login" | "showroom" | "magazzino";
-
+// 📌 Types
 interface StockItem {
   sku: string;
   articolo: string;
@@ -25,142 +25,225 @@ interface OrderLine {
   articolo: string;
   taglia: string;
   colore: string;
-  richiesti: number;
+  qty: number;
   prezzo: number;
 }
 
-// 📌 Login Screen
-function LoginScreen({ onLogin }: { onLogin: (id: string, pw: string) => void }) {
+interface Order {
+  id: string;
+  customer: string;
+  sconto: number;
+  stato: string;
+  created_at: string;
+  lines: OrderLine[];
+}
+
+// 🔐 Login screen
+function LoginScreen({ onLogin }: { onLogin: (role: string) => void }) {
   const [id, setId] = useState("");
   const [pw, setPw] = useState("");
 
-  return (
-    <div className="flex items-center justify-center h-screen bg-black">
-      <div className="bg-gray-900 p-8 rounded-lg shadow-lg w-96 text-center">
-        <img
-          src="/public/mars3lo.png"
-          alt="Mars3lo"
-          className="mx-auto mb-4 h-20"
-        />
-        <h2 className="text-white text-xl mb-6">Accedi</h2>
-        <input
-          placeholder="ID"
-          value={id}
-          onChange={(e) => setId(e.target.value)}
-          className="mb-3 w-full p-2 rounded"
-        />
-        <input
-          type="password"
-          placeholder="Password"
-          value={pw}
-          onChange={(e) => setPw(e.target.value)}
-          className="mb-3 w-full p-2 rounded"
-        />
-        <button
-          onClick={() => onLogin(id, pw)}
-          className="bg-white px-4 py-2 rounded text-black font-bold w-full"
-        >
-          Login
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// 📌 App principale
-export default function App() {
-  const [role, setRole] = useState<Role>("login");
-  const [stock, setStock] = useState<StockItem[]>([]);
-  const [order, setOrder] = useState<OrderLine[]>([]);
-  const [cliente, setCliente] = useState("");
-  const [sconto, setSconto] = useState(0);
-
-  // 🔍 Debug
-  useEffect(() => {
-    console.log("Ruolo attuale:", role);
-  }, [role]);
-
-  // 📌 Login check
-  const handleLogin = (id: string, pw: string) => {
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
     if (id === "Mars3loBo" && pw === "Francesco01") {
-      setRole("showroom");
+      onLogin("showroom");
     } else if (id === "Mars3loNa" && pw === "Gbesse01") {
-      setRole("magazzino");
+      onLogin("magazzino");
     } else {
       alert("Credenziali non valide");
     }
   };
 
-  // 📌 MOCK dati stock (poi arriva da Supabase)
+  return (
+    <div className="flex items-center justify-center h-screen bg-black">
+      <div className="text-center">
+        <img src="/public/public/mars3lo.png" alt="logo" className="mx-auto mb-6 w-40" />
+        <form onSubmit={handleSubmit} className="bg-white p-6 rounded-lg shadow-lg">
+          <input
+            type="text"
+            placeholder="ID"
+            value={id}
+            onChange={(e) => setId(e.target.value)}
+            className="block mb-3 w-64 p-2 border"
+          />
+          <input
+            type="password"
+            placeholder="Password"
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+            className="block mb-3 w-64 p-2 border"
+          />
+          <button type="submit" className="bg-black text-white px-4 py-2 rounded">
+            Accedi
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// 🛒 Showroom (Bologna)
+function ShowroomApp({ onLogout }: { onLogout: () => void }) {
+  const [stock, setStock] = useState<StockItem[]>([]);
+  const [cart, setCart] = useState<OrderLine[]>([]);
+  const [customer, setCustomer] = useState("");
+  const [sconto, setSconto] = useState(0);
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("all");
+
+  // fetch stock
   useEffect(() => {
-    setStock([
-      {
-        sku: "G23250-46-BLU",
-        articolo: "G23250 GIACCA",
-        categoria: "GIACCHE",
-        taglia: "46",
-        colore: "BLU",
-        qty: 10,
-        prezzo: 120,
-      },
-      {
-        sku: "G23250-48-BLU",
-        articolo: "G23250 GIACCA",
-        categoria: "GIACCHE",
-        taglia: "48",
-        colore: "BLU",
-        qty: 5,
-        prezzo: 120,
-      },
-    ]);
+    const fetchStock = async () => {
+      const { data } = await supabase.from("stock").select("*");
+      if (data) setStock(data as StockItem[]);
+    };
+    fetchStock();
   }, []);
 
-  // 📌 Funzioni ordini
-  const aggiungiRiga = (item: StockItem, qty: number) => {
-    if (qty <= 0) return;
-    setOrder((prev) => [
-      ...prev.filter((o) => o.sku !== item.sku),
-      {
-        sku: item.sku,
-        articolo: item.articolo,
-        taglia: item.taglia,
-        colore: item.colore,
-        richiesti: qty,
-        prezzo: item.prezzo,
-      },
-    ]);
+  const categorie: Record<string, string> = {
+    G: "Giacche",
+    P: "Pantaloni",
+    GB: "Giubbotti",
+    MG: "Maglie",
+    C: "Camicie",
+    PM: "Pantaloni Felpa",
   };
 
-  const svuotaOrdine = () => setOrder([]);
+  const getCategoria = (sku: string) => {
+    if (sku.startsWith("GB")) return "Giubbotti";
+    if (sku.startsWith("MG")) return "Maglie";
+    if (sku.startsWith("PM")) return "Pantaloni Felpa";
+    if (sku.startsWith("G")) return "Giacche";
+    if (sku.startsWith("P")) return "Pantaloni";
+    if (sku.startsWith("C")) return "Camicie";
+    return "Altro";
+  };
 
-  // 📌 Showroom UI
-  if (role === "showroom") {
-    const totale = order.reduce((sum, o) => sum + o.richiesti * o.prezzo, 0);
-    const totaleScontato = totale * (1 - sconto / 100);
+  const filtered = stock.filter(
+    (s) =>
+      (filter === "all" || getCategoria(s.sku) === filter) &&
+      (s.articolo.toLowerCase().includes(search.toLowerCase()) ||
+        s.sku.toLowerCase().includes(search.toLowerCase()) ||
+        s.colore.toLowerCase().includes(search.toLowerCase()))
+  );
 
-    return (
+  const addToCart = (item: StockItem, qty: number) => {
+    if (qty <= 0) return;
+    setCart((prev) => {
+      const existing = prev.find((l) => l.sku === item.sku && l.taglia === item.taglia);
+      if (existing) {
+        return prev.map((l) =>
+          l.sku === item.sku && l.taglia === item.taglia
+            ? { ...l, qty: qty }
+            : l
+        );
+      }
+      return [...prev, { ...item, qty }];
+    });
+  };
+
+  const removeFromCart = (sku: string, taglia: string) => {
+    setCart((prev) => prev.filter((l) => !(l.sku === sku && l.taglia === taglia)));
+  };
+
+  const clearCart = () => setCart([]);
+
+  const total = cart.reduce((sum, l) => sum + l.qty * l.prezzo, 0);
+  const totalScontato = total - total * (sconto / 100);
+
+  const sendOrder = async () => {
+    if (!customer) {
+      alert("Inserisci cliente");
+      return;
+    }
+    const orderId = Date.now().toString();
+    await supabase.from("orders").insert([{ id: orderId, customer, sconto, stato: "In attesa" }]);
+    const lines = cart.map((l) => ({
+      order_id: orderId,
+      sku: l.sku,
+      articolo: l.articolo,
+      taglia: l.taglia,
+      colore: l.colore,
+      richiesti: l.qty,
+      prezzo: l.prezzo,
+    }));
+    await supabase.from("order_lines").insert(lines);
+    alert("Ordine inviato");
+    clearCart();
+  };
+
+  const exportPDF = () => {
+    const doc = new jsPDF();
+    doc.text(`Ordine cliente: ${customer}`, 14, 15);
+    autoTable(doc, {
+      head: [["Articolo", "Taglia", "Colore", "Q.tà", "Prezzo", "Totale"]],
+      body: cart.map((l) => [
+        l.articolo,
+        l.taglia,
+        l.colore,
+        l.qty,
+        `€${l.prezzo}`,
+        `€${l.qty * l.prezzo}`,
+      ]),
+    });
+    doc.text(`Totale: €${total}`, 14, doc.lastAutoTable.finalY + 10);
+    doc.text(`Totale scontato: €${totalScontato}`, 14, doc.lastAutoTable.finalY + 20);
+    doc.save("ordine.pdf");
+  };
+
+  const exportExcel = () => {
+    const ws = XLSX.utils.json_to_sheet(cart);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Ordine");
+    XLSX.writeFile(wb, "ordine.xlsx");
+  };
+
+  return (
+    <div>
+      <div className="bg-black text-center py-2 mb-4">
+        <img src="/public/public/mars3lo.png" alt="logo" className="mx-auto w-24" />
+        <div className="text-white font-bold">MARS3LO B2B - Showroom Centergross</div>
+      </div>
+
       <div className="p-4">
-        <div className="flex justify-between items-center mb-4">
-          <h1 className="text-xl font-bold">Showroom Centergross</h1>
-          <div>
-            Cliente:{" "}
-            <input
-              value={cliente}
-              onChange={(e) => setCliente(e.target.value)}
-              className="border p-1 mr-2"
-            />
-            Sconto:{" "}
+        <div className="flex space-x-4 mb-4">
+          <input
+            placeholder="Cliente"
+            value={customer}
+            onChange={(e) => setCustomer(e.target.value)}
+            className="border p-2"
+          />
+          <label className="flex items-center space-x-2">
+            <span>Sconto</span>
             <input
               type="number"
               value={sconto}
-              onChange={(e) => setSconto(Number(e.target.value))}
-              className="border p-1 w-16"
-            />{" "}
-            %
-          </div>
+              onChange={(e) => setSconto(parseFloat(e.target.value))}
+              className="border p-2 w-20"
+            />
+            <span>%</span>
+          </label>
+          <input
+            placeholder="Cerca..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="border p-2 flex-1"
+          />
+          <select
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="border p-2"
+          >
+            <option value="all">Tutte</option>
+            {Object.values(categorie).map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
         </div>
 
-        <table className="w-full border mb-4">
+        <table className="w-full border mb-6">
           <thead>
             <tr className="bg-gray-200">
               <th>Articolo</th>
@@ -169,26 +252,34 @@ export default function App() {
               <th>Disponibili</th>
               <th>Prezzo</th>
               <th>Ordina</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
-            {stock.map((s) => (
-              <tr key={s.sku} className="border-b">
-                <td>{s.articolo}</td>
-                <td>{s.taglia}</td>
-                <td>{s.colore}</td>
-                <td>{s.qty}</td>
-                <td>€{s.prezzo}</td>
+            {filtered.map((item) => (
+              <tr key={item.sku + item.taglia}>
+                <td>{item.articolo}</td>
+                <td>{item.taglia}</td>
+                <td>{item.colore}</td>
+                <td>{item.qty}</td>
+                <td>€{item.prezzo}</td>
                 <td>
                   <input
                     type="number"
-                    min={0}
-                    max={s.qty}
-                    className="w-16 border"
-                    onChange={(e) =>
-                      aggiungiRiga(s, parseInt(e.target.value) || 0)
-                    }
+                    min="0"
+                    max={item.qty}
+                    defaultValue={0}
+                    onBlur={(e) => addToCart(item, parseInt(e.target.value))}
+                    className="w-16 border p-1"
                   />
+                </td>
+                <td>
+                  <button
+                    className="bg-red-500 text-white px-2 py-1 rounded"
+                    onClick={() => removeFromCart(item.sku, item.taglia)}
+                  >
+                    Svuota
+                  </button>
                 </td>
               </tr>
             ))}
@@ -208,57 +299,142 @@ export default function App() {
             </tr>
           </thead>
           <tbody>
-            {order.map((o) => (
-              <tr key={o.sku} className="border-b">
-                <td>{o.articolo}</td>
-                <td>{o.taglia}</td>
-                <td>{o.colore}</td>
-                <td>{o.richiesti}</td>
-                <td>€{o.prezzo}</td>
-                <td>€{o.richiesti * o.prezzo}</td>
+            {cart.map((l) => (
+              <tr key={l.sku + l.taglia}>
+                <td>{l.articolo}</td>
+                <td>{l.taglia}</td>
+                <td>{l.colore}</td>
+                <td>{l.qty}</td>
+                <td>€{l.prezzo}</td>
+                <td>€{l.qty * l.prezzo}</td>
               </tr>
             ))}
           </tbody>
         </table>
-        <div className="font-bold">
-          Totale: €{totale} <br />
-          Totale scontato: €{totaleScontato}
-        </div>
-        <button
-          onClick={svuotaOrdine}
-          className="mt-4 bg-red-500 text-white px-4 py-2 rounded"
-        >
-          Svuota Ordine
-        </button>
-      </div>
-    );
-  }
-
-  // 📌 Magazzino UI
-  if (role === "magazzino") {
-    return (
-      <div>
-        <div className="bg-black text-white p-4 flex justify-center items-center">
-          <img src="/public/mars3lo.png" alt="logo" className="h-10 mr-4" />
-          <span className="font-bold text-xl">MARS3LO B2B</span>
-        </div>
-        <div className="p-4">
-          <h1 className="text-xl font-bold mb-4">MAGAZZINO Napoli</h1>
-          <p>Qui vedrai gli ordini in arrivo dallo showroom (da collegare a Supabase).</p>
+        <div className="mb-2">Totale: €{total}</div>
+        <div className="mb-2">Totale scontato: €{totalScontato}</div>
+        <div className="space-x-2">
+          <button onClick={clearCart} className="bg-gray-500 text-white px-4 py-2 rounded">
+            Svuota Ordine
+          </button>
+          <button onClick={sendOrder} className="bg-green-600 text-white px-4 py-2 rounded">
+            Invia Ordine
+          </button>
+          <button onClick={exportPDF} className="bg-blue-600 text-white px-4 py-2 rounded">
+            PDF
+          </button>
+          <button onClick={exportExcel} className="bg-yellow-600 text-white px-4 py-2 rounded">
+            Excel
+          </button>
         </div>
       </div>
-    );
-  }
-
-  // 📌 Login di default
-  if (role === "login") {
-    return <LoginScreen onLogin={handleLogin} />;
-  }
-
-  // 📌 Fallback
-  return (
-    <div className="p-10 text-center text-red-600">
-      Errore: ruolo sconosciuto ({role})
     </div>
   );
+}
+
+// 📦 Magazzino (Napoli)
+function MagazzinoApp({ onLogout }: { onLogout: () => void }) {
+  const [orders, setOrders] = useState<Order[]>([]);
+
+  useEffect(() => {
+    const fetchOrders = async () => {
+      const { data: ords } = await supabase.from("orders").select("*");
+      if (ords) {
+        const withLines: Order[] = [];
+        for (const o of ords) {
+          const { data: lines } = await supabase.from("order_lines").select("*").eq("order_id", o.id);
+          withLines.push({ ...(o as any), lines: lines || [] });
+        }
+        setOrders(withLines);
+      }
+    };
+    fetchOrders();
+
+    // realtime
+    const channel = supabase
+      .channel("orders-changes")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "orders" }, fetchOrders)
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const confermaOrdine = async (order: Order) => {
+    await supabase.from("orders").update({ stato: "Confermato" }).eq("id", order.id);
+    alert("Ordine confermato");
+  };
+
+  const annullaOrdine = async (order: Order) => {
+    await supabase.from("orders").update({ stato: "Annullato" }).eq("id", order.id);
+    alert("Ordine annullato");
+  };
+
+  return (
+    <div>
+      <div className="bg-black text-center py-2 mb-4">
+        <img src="/public/public/mars3lo.png" alt="logo" className="mx-auto w-24" />
+        <div className="text-white font-bold">MARS3LO B2B - Magazzino Napoli</div>
+      </div>
+      <div className="p-4">
+        <h2 className="text-lg font-bold mb-4">Ordini ricevuti</h2>
+        {orders.map((o) => (
+          <div key={o.id} className="border p-3 mb-3">
+            <div className="flex justify-between mb-2">
+              <div>
+                <strong>{o.customer}</strong> – Stato: {o.stato}
+              </div>
+              <div>
+                <button
+                  onClick={() => confermaOrdine(o)}
+                  className="bg-green-600 text-white px-3 py-1 rounded mr-2"
+                >
+                  Conferma
+                </button>
+                <button
+                  onClick={() => annullaOrdine(o)}
+                  className="bg-red-600 text-white px-3 py-1 rounded"
+                >
+                  Annulla
+                </button>
+              </div>
+            </div>
+            <table className="w-full border">
+              <thead>
+                <tr className="bg-gray-200">
+                  <th>Articolo</th>
+                  <th>Taglia</th>
+                  <th>Colore</th>
+                  <th>Richiesti</th>
+                  <th>Prezzo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {o.lines.map((l) => (
+                  <tr key={l.sku + l.taglia}>
+                    <td>{l.articolo}</td>
+                    <td>{l.taglia}</td>
+                    <td>{l.colore}</td>
+                    <td>{l.richiesti}</td>
+                    <td>€{l.prezzo}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// 🌟 App principale
+export default function App() {
+  const [role, setRole] = useState("login");
+
+  if (role === "login") return <LoginScreen onLogin={setRole} />;
+  if (role === "showroom") return <ShowroomApp onLogout={() => setRole("login")} />;
+  if (role === "magazzino") return <MagazzinoApp onLogout={() => setRole("login")} />;
+
+  return <div className="p-10 text-red-600">Errore ruolo: {role}</div>;
 }
