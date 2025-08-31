@@ -5,19 +5,19 @@ import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 
-// ✅ Supabase client
+// 🔑 Supabase client
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL!,
   import.meta.env.VITE_SUPABASE_ANON_KEY!
 );
 
-// ✅ Credenziali fisse
+// 🔐 Credenziali fisse
 const CREDENTIALS = {
   showroom: { id: "Mars3loBo", pw: "Francesco01" },
   magazzino: { id: "Mars3loNa", pw: "Gbesse01" },
 };
 
-// ✅ Tipi
+// 🔎 Tipi
 type StockRow = {
   sku: string;
   articolo: string;
@@ -101,7 +101,7 @@ export default function App() {
   // --- Export PDF
   const exportPDF = () => {
     const doc = new jsPDF();
-    doc.addImage("/public/mars3lo.png", "PNG", 10, 10, 40, 20);
+    doc.addImage("/mars3lo.png", "PNG", 10, 10, 40, 20);
     doc.setFontSize(18);
     doc.text("Ordine Cliente", 105, 20, { align: "center" });
     doc.setFontSize(12);
@@ -180,7 +180,7 @@ export default function App() {
     return (
       <div className="h-screen flex items-center justify-center bg-black text-white">
         <div className="text-center">
-          <img src="/public/mars3lo.png" alt="Mars3lo Logo" className="mx-auto mb-6 w-40" />
+          <img src="/mars3lo.png" alt="Mars3lo Logo" className="mx-auto mb-6 w-40" />
           <h1 className="text-2xl mb-4">Accesso</h1>
           <input
             placeholder="ID"
@@ -210,7 +210,7 @@ export default function App() {
   return (
     <div className="p-4">
       <header className="flex justify-between items-center mb-4">
-        <img src="/public/mars3lo.png" alt="Mars3lo Logo" className="w-32" />
+        <img src="/mars3lo.png" alt="Mars3lo Logo" className="w-32" />
         <div>
           <input
             placeholder="Nome cliente"
@@ -380,14 +380,36 @@ export default function App() {
               </tr>
             </thead>
             <tbody>
-  {carrello.map((r, i) => (
-    <tr key={i} className="border-t">
-      <td>{r.articolo}</td>
-      <td>{r.colore}</td>
-      <td>{r.taglia}</td>
-      <td>{r.richiesti}</td>
-      <td>€ {r.prezzo.toFixed(2)}</td>
-      <td>€ {(r.richiesti * r.prezzo).toFixed(2)}</td>
-    </tr>
-  ))}
-</tbody>
+              {carrello.map((r, i) => (
+                <tr key={i} className="border-t">
+                  <td>{r.articolo}</td>
+                  <td>{r.colore}</td>
+                  <td>{r.taglia}</td>
+                  <td>{r.richiesti}</td>
+                  <td>€ {r.prezzo.toFixed(2)}</td>
+                  <td>€ {(r.richiesti * r.prezzo).toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="mt-4">
+            <p>Totale Lordo: € {totaleLordo.toFixed(2)}</p>
+            <p>Sconto: {sconto}%</p>
+            <p className="font-bold">Totale Imponibile: € {totaleImponibile.toFixed(2)}</p>
+          </div>
+          <div className="mt-4 flex gap-2">
+            <button onClick={exportPDF} className="bg-red-500 text-white px-4 py-2 rounded">
+              Stampa PDF
+            </button>
+            <button onClick={exportExcel} className="bg-green-500 text-white px-4 py-2 rounded">
+              Esporta Excel
+            </button>
+            <button onClick={exportCSV} className="bg-blue-500 text-white px-4 py-2 rounded">
+              Esporta CSV
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
