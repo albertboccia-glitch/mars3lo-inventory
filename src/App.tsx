@@ -1,349 +1,402 @@
 import React, { useState, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
+import "jspdf-autotable";
 
+// 🔹 Configura Supabase (legge le env da Vercel)
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL!,
   import.meta.env.VITE_SUPABASE_ANON_KEY!
 );
 
-// ----------- UTILS ------------
-function getCategoria(code: string): string {
-  const c = code.toUpperCase();
-  if (c.startsWith("GB")) return "GIUBBOTTI";
-  if (c.startsWith("MG")) return "MAGLIE";
-  if (c.startsWith("PM")) return "PANTALONI FELPA";
-  if (c.startsWith("P")) return "PANTALONI";
-  if (c.startsWith("G")) return "GIACCHE";
-  if (c.startsWith("C")) return "CAMICIE";
-  return "ALTRO";
-}
+// 🔹 Ordinamento taglie numeriche e alfabetiche
+const sortTaglie = (arr: string[]) => {
+  const orderLetters = ["XS", "S", "M", "L", "XL", "XXL"];
+  return arr.sort((a, b) => {
+    const numA = parseInt(a);
+    const numB = parseInt(b);
+    const isNumA = !isNaN(numA);
+    const isNumB = !isNaN(numB);
 
-function groupStock(rows: any[]) {
-  const grouped: any[] = [];
-  rows.forEach((r) => {
-    const key = r.articolo + "|" + r.colore;
-    let g = grouped.find((x) => x.key === key);
-    if (!g) {
-      g = {
-        key,
-        articolo: r.articolo,
-        colore: r.colore,
-        prezzo: r.prezzo,
-        sizes: {},
-      };
-      grouped.push(g);
-    }
-    g.sizes[r.taglia] = r.qty;
+    if (isNumA && isNumB) return numA - numB; // numeri
+    if (!isNumA && !isNumB)
+      return orderLetters.indexOf(a) - orderLetters.indexOf(b); // lettere
+    return isNumA ? -1 : 1; // numeri prima delle lettere
   });
-  return grouped;
-}
+};
 
-// ----------- COMPONENTE PRINCIPALE ------------
+type StockRow = {
+  sku: string;
+  articolo: string;
+  categoria: string;
+  taglia: string;
+  colore: string;
+  qty: number;
+  prezzo: number;
+};
+
+type CarrelloRow = StockRow & { ordina: number };
+
 export default function App() {
-  const [user, setUser] = useState<null | { ruolo: string }> (null);
-  const [id, setId] = useState("");
-  const [pw, setPw] = useState("");
-  const [stock, setStock] = useState<any[]>([]);
-  const [categoria, setCategoria] = useState("TUTTI");
-  const [search, setSearch] = useState("");
-  const [carrello, setCarrello] = useState<any[]>([]);
+  const [user, setUser] = useState<null | { ruolo: string }>({ ruolo: "" });
+  const [stock, setStock] = useState<StockRow[]>([]);
+  const [carrello, setCarrello] = useState<CarrelloRow[]>([]);
   const [cliente, setCliente] = useState("");
   const [sconto, setSconto] = useState(0);
-  const [ordini, setOrdini] = useState<any[]>([]);
 
-  // login semplice
-  function handleLogin(e: React.FormEvent) {
-    e.preventDefault();
-    if (id === "Mars3loBo" && pw === "Francesco01") {
+  // 🔹 Login fittizio
+  const [loginId, setLoginId] = useState("");
+  const [loginPw, setLoginPw] = useState("");
+  const [logged, setLogged] = useState(false);
+
+  const handleLogin = () => {
+    if (loginId === "Mars3loBo" && loginPw === "Francesco01") {
       setUser({ ruolo: "showroom" });
-    } else if (id === "Mars3loNa" && pw === "Gbesse01") {
+      setLogged(true);
+    } else if (loginId === "Mars3loNa" && loginPw === "Gbesse01") {
       setUser({ ruolo: "magazzino" });
+      setLogged(true);
     } else {
       alert("Credenziali errate");
     }
-  }
+  };
 
-  // carica stock
+  // 🔹 Carica stock da Supabase
   useEffect(() => {
-    if (!user) return;
-    async function loadStock() {
-      const { data } = await supabase.from("stock").select("*");
-      if (data) setStock(data);
-    }
-    loadStock();
-  }, [user]);
+    const fetchStock = async () => {
+      let { data, error } = await supabase.from("stock").select("*");
+      if (error) console.error(error);
+      else setStock(data as StockRow[]);
+    };
+    fetchStock();
+  }, []);
 
-  // carica ordini per magazzino
-  useEffect(() => {
-    if (user?.ruolo !== "magazzino") return;
-    async function loadOrders() {
-      const { data } = await supabase.from("orders").select("*");
-      if (data) setOrdini(data);
-    }
-    loadOrders();
-  }, [user]);
+  // 🔹 Raggruppamento articoli
+  const grouped = stock.reduce((acc: any, row) => {
+    const key = row.articolo + "_" + row.colore;
+    if (!acc[key]) acc[key] = { ...row, taglie: [] as StockRow[] };
+    acc[key].taglie.push(row);
+    return acc;
+  }, {});
 
-  // aggiungi articoli al carrello
-  function aggiungiRiga(g: any, inputs: Record<string, number>) {
-    const newItems: any[] = [];
-    Object.entries(inputs).forEach(([taglia, qty]) => {
-      if (qty && qty > 0) {
-        newItems.push({
-          articolo: g.articolo,
-          colore: g.colore,
-          taglia,
-          prezzo: g.prezzo,
-          qty,
-        });
-      }
-    });
-    // sostituisco righe con stesso articolo/colore/taglia
-    const updated = carrello.filter(
-      (c) => !newItems.some(
-        (n) =>
-          n.articolo === c.articolo &&
-          n.colore === c.colore &&
-          n.taglia === c.taglia
+  // 🔹 Aggiungi al carrello
+  const addToCart = (rows: StockRow[], ordini: Record<string, number>) => {
+    const nuovi = rows
+      .map((r) =>
+        ordini[r.taglia]
+          ? { ...r, ordina: ordini[r.taglia] }
+          : null
       )
-    );
-    setCarrello([...updated, ...newItems]);
-  }
-
-  function svuotaRiga(g: any) {
-    setCarrello(
-      carrello.filter(
-        (c) => !(c.articolo === g.articolo && c.colore === g.colore)
-      )
-    );
-  }
-
-  function totaleLordo() {
-    return carrello.reduce((s, c) => s + c.prezzo * c.qty, 0);
-  }
-  function totaleNetto() {
-    return totaleLordo() * (1 - sconto / 100);
-  }
-
-  // esporta ordine PDF
-  function esportaPDF() {
-    const doc = new jsPDF();
-    doc.text(`Ordine cliente: ${cliente}`, 10, 10);
-    autoTable(doc, {
-      head: [["Articolo", "Colore", "Taglia", "Q.tà", "Prezzo", "Totale"]],
-      body: carrello.map((c) => [
-        c.articolo,
-        c.colore,
-        c.taglia,
-        c.qty,
-        "€" + c.prezzo,
-        "€" + c.prezzo * c.qty,
-      ]),
+      .filter(Boolean) as CarrelloRow[];
+    // 🔹 Sostituisce eventuali righe già esistenti (non duplica)
+    setCarrello((prev) => {
+      const senza = prev.filter(
+        (p) => !nuovi.find((n) => n.sku === p.sku)
+      );
+      return [...senza, ...nuovi];
     });
-    doc.text(`Totale: €${totaleNetto()}`, 10, doc.lastAutoTable.finalY + 10);
-    doc.save("ordine.pdf");
-  }
+  };
 
-  // showroom griglia
-  function Showroom() {
-    const grouped = groupStock(stock);
-    const filtered = grouped.filter(
-      (g) =>
-        (categoria === "TUTTI" || getCategoria(g.articolo) === categoria) &&
-        (g.articolo.toLowerCase().includes(search.toLowerCase()) ||
-          g.colore.toLowerCase().includes(search.toLowerCase()))
+  // 🔹 Svuota carrello
+  const svuotaCarrello = () => setCarrello([]);
+
+  // 🔹 Totali
+  const totale = carrello.reduce(
+    (sum, r) => sum + r.prezzo * r.ordina,
+    0
+  );
+  const totaleScontato = totale * (1 - sconto / 100);
+
+  // 🔹 Esporta CSV
+  const esportaCSV = () => {
+    const header = [
+      "Articolo",
+      "Categoria",
+      "Taglia",
+      "Colore",
+      "Q.tà",
+      "Prezzo",
+      "Totale Riga",
+    ];
+    const rows = carrello.map((r) => [
+      r.articolo,
+      r.categoria,
+      r.taglia,
+      r.colore,
+      r.ordina,
+      r.prezzo,
+      r.ordina * r.prezzo,
+    ]);
+    const csv = [header, ...rows]
+      .map((x) => x.join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "ordine.csv";
+    a.click();
+  };
+
+  // 🔹 Esporta Excel
+  const esportaExcel = () => {
+    const ws = XLSX.utils.json_to_sheet(
+      carrello.map((r) => ({
+        Articolo: r.articolo,
+        Categoria: r.categoria,
+        Taglia: r.taglia,
+        Colore: r.colore,
+        Quantità: r.ordina,
+        Prezzo: r.prezzo,
+        TotaleRiga: r.ordina * r.prezzo,
+      }))
     );
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Ordine");
+    XLSX.writeFile(wb, "ordine.xlsx");
+  };
 
+  // 🔹 Invia ordine su Supabase
+  const inviaOrdine = async () => {
+    if (!cliente) {
+      alert("Inserisci il nome cliente");
+      return;
+    }
+    const orderId = Date.now().toString();
+    const { error: ordErr } = await supabase.from("orders").insert([
+      { id: orderId, customer: cliente, stato: "In attesa" },
+    ]);
+    if (ordErr) {
+      console.error(ordErr);
+      return;
+    }
+    const { error: linesErr } = await supabase.from("order_lines").insert(
+      carrello.map((r) => ({
+        order_id: orderId,
+        sku: r.sku,
+        articolo: r.articolo,
+        taglia: r.taglia,
+        colore: r.colore,
+        richiesti: r.ordina,
+        prezzo: r.prezzo,
+      }))
+    );
+    if (linesErr) {
+      console.error(linesErr);
+      return;
+    }
+    alert("Ordine inviato!");
+    svuotaCarrello();
+  };
+
+  // 🔹 UI Login
+  if (!logged) {
     return (
-      <div className="p-4">
-        <div className="mb-2 flex items-center space-x-2">
+      <div className="flex items-center justify-center h-screen bg-black">
+        <div className="bg-gray-900 p-8 rounded-xl w-80 text-center">
+          <img
+            src="/mars3lo.png"
+            alt="Mars3lo"
+            className="mx-auto mb-4 w-32"
+          />
+          <h1 className="text-white text-xl mb-4">Mars3lo B2B</h1>
           <input
-            placeholder="Cliente"
-            value={cliente}
-            onChange={(e) => setCliente(e.target.value)}
-            className="border p-1"
+            className="w-full mb-2 p-2 rounded"
+            placeholder="ID"
+            value={loginId}
+            onChange={(e) => setLoginId(e.target.value)}
           />
           <input
-            type="number"
-            placeholder="Sconto %"
-            value={sconto}
-            onChange={(e) => setSconto(Number(e.target.value))}
-            className="border p-1 w-20"
+            type="password"
+            className="w-full mb-4 p-2 rounded"
+            placeholder="Password"
+            value={loginPw}
+            onChange={(e) => setLoginPw(e.target.value)}
           />
-          <select
-            value={categoria}
-            onChange={(e) => setCategoria(e.target.value)}
-            className="border p-1"
-          >
-            <option>TUTTI</option>
-            <option>GIACCHE</option>
-            <option>GIUBBOTTI</option>
-            <option>MAGLIE</option>
-            <option>PANTALONI</option>
-            <option>PANTALONI FELPA</option>
-            <option>CAMICIE</option>
-          </select>
-          <input
-            placeholder="Cerca..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="border p-1"
-          />
-        </div>
-
-        <table className="w-full border text-sm">
-          <thead>
-            <tr className="bg-gray-100">
-              <th>Articolo</th>
-              <th>Colore</th>
-              <th>Prezzo</th>
-              {Array.from(
-                new Set(stock.map((s) => s.taglia))
-              ).map((t) => (
-                <th key={t}>{t}</th>
-              ))}
-              <th>Azioni</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((g) => {
-              const [inputs, setInputs] = useState<Record<string, number>>({});
-              return (
-                <tr key={g.key} className="border-t">
-                  <td>{g.articolo}</td>
-                  <td className="font-bold">{g.colore}</td>
-                  <td>€{g.prezzo}</td>
-                  {Array.from(new Set(stock.map((s) => s.taglia))).map(
-                    (t) => (
-                      <td key={t}>
-                        <input
-                          type="number"
-                          min={0}
-                          max={g.sizes[t] || 0}
-                          value={inputs[t] || ""}
-                          onChange={(e) =>
-                            setInputs({
-                              ...inputs,
-                              [t]: Number(e.target.value),
-                            })
-                          }
-                          className="w-12 border p-1"
-                        />
-                        <div className="text-xs text-gray-500">
-                          {g.sizes[t] || 0}
-                        </div>
-                      </td>
-                    )
-                  )}
-                  <td>
-                    <button
-                      onClick={() => aggiungiRiga(g, inputs)}
-                      className="bg-green-500 text-white px-2 py-1 mr-1"
-                    >
-                      Aggiungi
-                    </button>
-                    <button
-                      onClick={() => svuotaRiga(g)}
-                      className="bg-red-500 text-white px-2 py-1"
-                    >
-                      Svuota
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-
-        <div className="mt-4">
-          <h3 className="font-bold">Ordine</h3>
-          <table className="w-full border text-sm">
-            <thead>
-              <tr className="bg-gray-100">
-                <th>Articolo</th>
-                <th>Colore</th>
-                <th>Taglia</th>
-                <th>Q.tà</th>
-                <th>Prezzo</th>
-                <th>Totale</th>
-              </tr>
-            </thead>
-            <tbody>
-              {carrello.map((c, i) => (
-                <tr key={i}>
-                  <td>{c.articolo}</td>
-                  <td>{c.colore}</td>
-                  <td>{c.taglia}</td>
-                  <td>{c.qty}</td>
-                  <td>€{c.prezzo}</td>
-                  <td>€{c.prezzo * c.qty}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div className="mt-2">
-            Totale: €{totaleLordo()} <br />
-            Totale scontato: €{totaleNetto()}
-          </div>
           <button
-            onClick={esportaPDF}
-            className="bg-blue-500 text-white px-2 py-1 mt-2"
+            onClick={handleLogin}
+            className="bg-red-600 text-white px-4 py-2 rounded w-full"
           >
-            Esporta PDF
+            Accedi
           </button>
         </div>
       </div>
     );
   }
 
-  // magazzino: lista ordini
-  function Magazzino() {
-    return (
-      <div className="p-4">
-        <h2 className="font-bold text-lg mb-2">Ordini ricevuti</h2>
-        {ordini.map((o) => (
-          <div key={o.id} className="border p-2 mb-2">
-            Ordine {o.id} - Cliente: {o.customer}
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <div className="h-screen flex flex-col items-center justify-center bg-black text-white">
-        <img src="/mars3lo.png" className="w-40 mb-4" />
-        <form onSubmit={handleLogin} className="bg-gray-900 p-4 rounded">
-          <input
-            placeholder="ID"
-            value={id}
-            onChange={(e) => setId(e.target.value)}
-            className="block mb-2 p-1 text-black"
-          />
-          <input
-            type="password"
-            placeholder="Password"
-            value={pw}
-            onChange={(e) => setPw(e.target.value)}
-            className="block mb-2 p-1 text-black"
-          />
-          <button className="bg-blue-500 px-4 py-2">Login</button>
-        </form>
-      </div>
-    );
-  }
-
+  // 🔹 UI principale
   return (
-    <div>
-      <div className="bg-black text-white flex items-center justify-center h-16">
-        <img src="/mars3lo.png" className="h-12 mr-2" />
-        <span className="font-bold text-lg">MARS3LO B2B</span>
+    <div className="min-h-screen bg-gray-100">
+      {/* Barra nera */}
+      <div className="bg-black p-4 flex justify-center items-center">
+        <img src="/mars3lo.png" alt="Mars3lo" className="h-10 mr-4" />
+        <h1 className="text-white text-xl font-bold">Mars3lo B2B</h1>
       </div>
-      {user.ruolo === "showroom" && <Showroom />}
-      {user.ruolo === "magazzino" && <Magazzino />}
+
+      {/* Cliente + Sconto */}
+      <div className="p-4 flex gap-4 items-center">
+        <input
+          placeholder="Cliente"
+          className="border p-2 rounded flex-1"
+          value={cliente}
+          onChange={(e) => setCliente(e.target.value)}
+        />
+        <label className="flex items-center gap-2">
+          Sconto:
+          <input
+            type="number"
+            className="border p-2 rounded w-20"
+            value={sconto}
+            onChange={(e) => setSconto(parseInt(e.target.value) || 0)}
+          />
+          %
+        </label>
+      </div>
+
+      {/* Griglia articoli */}
+      <div className="p-4 space-y-6">
+        {Object.values(grouped).map((gruppo: any) => {
+          const rows: StockRow[] = sortTaglie(
+            gruppo.taglie.map((t: StockRow) => t.taglia)
+          ).map(
+            (taglia) =>
+              gruppo.taglie.find((t: StockRow) => t.taglia === taglia)!
+          );
+
+          const ordini: Record<string, number> = {};
+          return (
+            <div
+              key={gruppo.sku}
+              className="bg-white shadow rounded-lg p-4"
+            >
+              <h2 className="font-bold mb-2">
+                {gruppo.articolo} {gruppo.categoria} – {gruppo.colore} – €
+                {gruppo.prezzo}
+              </h2>
+              <div className="overflow-x-auto">
+                <table className="min-w-max border text-center">
+                  <thead>
+                    <tr>
+                      <th className="px-2">Taglia</th>
+                      {rows.map((r) => (
+                        <th key={r.taglia} className="px-2">
+                          {r.taglia}
+                        </th>
+                      ))}
+                    </tr>
+                    <tr>
+                      <td className="px-2">Disp.</td>
+                      {rows.map((r) => (
+                        <td key={r.taglia}>{r.qty}</td>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td className="px-2">Ordina</td>
+                      {rows.map((r) => (
+                        <td key={r.taglia}>
+                          <input
+                            type="number"
+                            min={0}
+                            max={r.qty}
+                            className="w-16 p-1 border rounded"
+                            onChange={(e) =>
+                              (ordini[r.taglia] =
+                                parseInt(e.target.value) || 0)
+                            }
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-2 flex gap-2">
+                <button
+                  onClick={() => addToCart(rows, ordini)}
+                  className="bg-green-600 text-white px-4 py-1 rounded"
+                >
+                  Aggiungi
+                </button>
+                <button
+                  onClick={() =>
+                    setCarrello((prev) =>
+                      prev.filter(
+                        (p) =>
+                          !rows.find((r) => r.sku === p.sku)
+                      )
+                    )
+                  }
+                  className="bg-gray-600 text-white px-4 py-1 rounded"
+                >
+                  Svuota
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Carrello */}
+      <div className="p-4 bg-white shadow mt-6">
+        <h2 className="font-bold mb-2">Ordine</h2>
+        <table className="w-full border">
+          <thead>
+            <tr>
+              <th>Articolo</th>
+              <th>Taglia</th>
+              <th>Colore</th>
+              <th>Q.tà</th>
+              <th>Prezzo</th>
+              <th>Totale</th>
+            </tr>
+          </thead>
+          <tbody>
+            {carrello.map((r) => (
+              <tr key={r.sku + r.taglia}>
+                <td>{r.articolo}</td>
+                <td>{r.taglia}</td>
+                <td>{r.colore}</td>
+                <td>{r.ordina}</td>
+                <td>€{r.prezzo}</td>
+                <td>€{r.ordina * r.prezzo}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="mt-4">
+          <p>Totale: €{totale}</p>
+          <p>Totale scontato: €{totaleScontato.toFixed(2)}</p>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            onClick={inviaOrdine}
+            className="bg-blue-600 text-white px-4 py-2 rounded"
+          >
+            Invia Ordine
+          </button>
+          <button
+            onClick={esportaCSV}
+            className="bg-gray-600 text-white px-4 py-2 rounded"
+          >
+            Esporta CSV
+          </button>
+          <button
+            onClick={esportaExcel}
+            className="bg-gray-600 text-white px-4 py-2 rounded"
+          >
+            Esporta Excel
+          </button>
+          <button
+            onClick={svuotaCarrello}
+            className="bg-red-600 text-white px-4 py-2 rounded"
+          >
+            Svuota Ordine
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
