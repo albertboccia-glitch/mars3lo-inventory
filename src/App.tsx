@@ -1,311 +1,263 @@
 import React, { useState, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
-import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
-import "jspdf-autotable";
+import autoTable from "jspdf-autotable";
+import * as XLSX from "xlsx";
 
-// 🔹 Configura Supabase (legge le env da Vercel)
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL!,
   import.meta.env.VITE_SUPABASE_ANON_KEY!
 );
 
-// 🔹 Ordinamento taglie numeriche e alfabetiche
-const sortTaglie = (arr: string[]) => {
-  const orderLetters = ["XS", "S", "M", "L", "XL", "XXL"];
-  return arr.sort((a, b) => {
-    const numA = parseInt(a);
-    const numB = parseInt(b);
-    const isNumA = !isNaN(numA);
-    const isNumB = !isNaN(numB);
+// 🔹 funzione classificazione articoli
+function getCategoria(code: string): string {
+  const c = code.toUpperCase();
+  if (c.startsWith("GB")) return "GIUBBOTTI";
+  if (c.startsWith("MG")) return "MAGLIE";
+  if (c.startsWith("PM")) return "PANTALONI FELPA";
+  if (c.startsWith("CAP")) return "CAPPOTTI";
+  if (c.startsWith("P")) return "PANTALONI";
+  if (c.startsWith("G")) return "GIACCHE";
+  if (c.startsWith("C")) return "CAMICIE";
+  return "ALTRO";
+}
 
-    if (isNumA && isNumB) return numA - numB; // numeri
-    if (!isNumA && !isNumB)
-      return orderLetters.indexOf(a) - orderLetters.indexOf(b); // lettere
-    return isNumA ? -1 : 1; // numeri prima delle lettere
+// 🔹 ordinamento taglie numeriche e lettere
+function sortTaglie(taglie: string[]): string[] {
+  const ordineLettere = ["XS", "S", "M", "L", "XL", "XXL"];
+  return taglie.sort((a, b) => {
+    const na = parseInt(a);
+    const nb = parseInt(b);
+    if (!isNaN(na) && !isNaN(nb)) return na - nb;
+    if (!isNaN(na)) return -1;
+    if (!isNaN(nb)) return 1;
+    return ordineLettere.indexOf(a) - ordineLettere.indexOf(b);
   });
-};
+}
 
 type StockRow = {
   sku: string;
   articolo: string;
-  categoria: string;
   taglia: string;
   colore: string;
   qty: number;
   prezzo: number;
 };
 
-type CarrelloRow = StockRow & { ordina: number };
+type CarrelloRow = StockRow & { ord: number };
 
 export default function App() {
-  const [user, setUser] = useState<null | { ruolo: string }>({ ruolo: "" });
+  const [utente, setUtente] = useState<"login" | "showroom" | "magazzino">("login");
+  const [id, setId] = useState("");
+  const [pwd, setPwd] = useState("");
   const [stock, setStock] = useState<StockRow[]>([]);
   const [carrello, setCarrello] = useState<CarrelloRow[]>([]);
   const [cliente, setCliente] = useState("");
   const [sconto, setSconto] = useState(0);
+  const [categoriaFiltro, setCategoriaFiltro] = useState("TUTTI");
 
-  // 🔹 Login fittizio
-  const [loginId, setLoginId] = useState("");
-  const [loginPw, setLoginPw] = useState("");
-  const [logged, setLogged] = useState(false);
+  // 🔹 login
+  function handleLogin() {
+    if (id === "Mars3loBo" && pwd === "Francesco01") setUtente("showroom");
+    else if (id === "Mars3loNa" && pwd === "Gbesse01") setUtente("magazzino");
+    else alert("Credenziali errate");
+  }
 
-  const handleLogin = () => {
-    if (loginId === "Mars3loBo" && loginPw === "Francesco01") {
-      setUser({ ruolo: "showroom" });
-      setLogged(true);
-    } else if (loginId === "Mars3loNa" && loginPw === "Gbesse01") {
-      setUser({ ruolo: "magazzino" });
-      setLogged(true);
-    } else {
-      alert("Credenziali errate");
-    }
-  };
-
-  // 🔹 Carica stock da Supabase
+  // 🔹 fetch stock da Supabase
   useEffect(() => {
-    const fetchStock = async () => {
-      let { data, error } = await supabase.from("stock").select("*");
-      if (error) console.error(error);
-      else setStock(data as StockRow[]);
-    };
-    fetchStock();
-  }, []);
+    if (utente !== "login") {
+      supabase.from("stock").select("*").then(({ data }) => {
+        if (data) setStock(data as StockRow[]);
+      });
+    }
+  }, [utente]);
 
-  // 🔹 Raggruppamento articoli
-  const grouped = stock.reduce((acc: any, row) => {
-    const key = row.articolo + "_" + row.colore;
-    if (!acc[key]) acc[key] = { ...row, taglie: [] as StockRow[] };
-    acc[key].taglie.push(row);
-    return acc;
-  }, {});
-
-  // 🔹 Aggiungi al carrello
-  const addToCart = (rows: StockRow[], ordini: Record<string, number>) => {
-    const nuovi = rows
-      .map((r) =>
-        ordini[r.taglia]
-          ? { ...r, ordina: ordini[r.taglia] }
-          : null
-      )
-      .filter(Boolean) as CarrelloRow[];
-    // 🔹 Sostituisce eventuali righe già esistenti (non duplica)
-    setCarrello((prev) => {
-      const senza = prev.filter(
-        (p) => !nuovi.find((n) => n.sku === p.sku)
-      );
-      return [...senza, ...nuovi];
-    });
-  };
-
-  // 🔹 Svuota carrello
-  const svuotaCarrello = () => setCarrello([]);
-
-  // 🔹 Totali
-  const totale = carrello.reduce(
-    (sum, r) => sum + r.prezzo * r.ordina,
-    0
+  // 🔹 raggruppa stock per articolo/colore
+  const gruppi = Object.values(
+    stock.reduce((acc: any, r) => {
+      const key = r.articolo + "-" + r.colore;
+      if (!acc[key]) {
+        acc[key] = {
+          articolo: r.articolo,
+          colore: r.colore,
+          prezzo: r.prezzo,
+          taglie: {},
+        };
+      }
+      acc[key].taglie[r.taglia] = r;
+      return acc;
+    }, {})
   );
+
+  // 🔹 aggiungi al carrello
+  function aggiungi(gruppo: any, quanti: Record<string, number>) {
+    const nuove: CarrelloRow[] = [];
+    for (const t in quanti) {
+      const q = quanti[t];
+      if (q > 0) {
+        nuove.push({ ...gruppo.taglie[t], ord: q });
+      }
+    }
+    setCarrello([...carrello.filter(c => !(c.articolo === gruppo.articolo && c.colore === gruppo.colore)), ...nuove]);
+  }
+
+  // 🔹 svuota riga
+  function svuota(gruppo: any) {
+    setCarrello(carrello.filter(c => !(c.articolo === gruppo.articolo && c.colore === gruppo.colore)));
+  }
+
+  // 🔹 totali
+  const totale = carrello.reduce((s, r) => s + r.ord * r.prezzo, 0);
   const totaleScontato = totale * (1 - sconto / 100);
 
-  // 🔹 Esporta CSV
-  const esportaCSV = () => {
-    const header = [
-      "Articolo",
-      "Categoria",
-      "Taglia",
-      "Colore",
-      "Q.tà",
-      "Prezzo",
-      "Totale Riga",
-    ];
-    const rows = carrello.map((r) => [
+  // 🔹 esporta CSV
+  function exportCSV() {
+    const header = ["Articolo", "Taglia", "Colore", "Q.tà", "Prezzo", "Totale"];
+    const rows = carrello.map(r => [
       r.articolo,
-      r.categoria,
       r.taglia,
       r.colore,
-      r.ordina,
-      r.prezzo,
-      r.ordina * r.prezzo,
+      r.ord,
+      r.prezzo.toFixed(2),
+      (r.ord * r.prezzo).toFixed(2),
     ]);
-    const csv = [header, ...rows]
-      .map((x) => x.join(","))
-      .join("\n");
+    const csv = [header, ...rows].map(r => r.join(";")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url;
+    a.href = URL.createObjectURL(blob);
     a.download = "ordine.csv";
     a.click();
-  };
+  }
 
-  // 🔹 Esporta Excel
-  const esportaExcel = () => {
+  // 🔹 esporta Excel
+  function exportExcel() {
     const ws = XLSX.utils.json_to_sheet(
-      carrello.map((r) => ({
+      carrello.map(r => ({
         Articolo: r.articolo,
-        Categoria: r.categoria,
         Taglia: r.taglia,
         Colore: r.colore,
-        Quantità: r.ordina,
-        Prezzo: r.prezzo,
-        TotaleRiga: r.ordina * r.prezzo,
+        Quantità: r.ord,
+        Prezzo: r.prezzo.toFixed(2),
+        Totale: (r.ord * r.prezzo).toFixed(2),
       }))
     );
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Ordine");
     XLSX.writeFile(wb, "ordine.xlsx");
-  };
+  }
 
-  // 🔹 Invia ordine su Supabase
-  const inviaOrdine = async () => {
-    if (!cliente) {
-      alert("Inserisci il nome cliente");
-      return;
-    }
-    const orderId = Date.now().toString();
-    const { error: ordErr } = await supabase.from("orders").insert([
-      { id: orderId, customer: cliente, stato: "In attesa" },
-    ]);
-    if (ordErr) {
-      console.error(ordErr);
-      return;
-    }
-    const { error: linesErr } = await supabase.from("order_lines").insert(
-      carrello.map((r) => ({
-        order_id: orderId,
-        sku: r.sku,
-        articolo: r.articolo,
-        taglia: r.taglia,
-        colore: r.colore,
-        richiesti: r.ordina,
-        prezzo: r.prezzo,
-      }))
-    );
-    if (linesErr) {
-      console.error(linesErr);
-      return;
-    }
-    alert("Ordine inviato!");
-    svuotaCarrello();
-  };
+  // 🔹 esporta PDF
+  function exportPDF() {
+    const doc = new jsPDF();
+    doc.text("Ordine Cliente: " + cliente, 10, 10);
+    autoTable(doc, {
+      head: [["Articolo", "Taglia", "Colore", "Q.tà", "Prezzo", "Totale"]],
+      body: carrello.map(r => [
+        r.articolo,
+        r.taglia,
+        r.colore,
+        r.ord,
+        r.prezzo.toFixed(2),
+        (r.ord * r.prezzo).toFixed(2),
+      ]),
+    });
+    doc.text(`Totale: €${totale.toFixed(2)}`, 10, doc.lastAutoTable.finalY + 10);
+    doc.text(`Totale scontato: €${totaleScontato.toFixed(2)}`, 10, doc.lastAutoTable.finalY + 20);
+    doc.save("ordine.pdf");
+  }
 
-  // 🔹 UI Login
-  if (!logged) {
+  if (utente === "login") {
     return (
-      <div className="flex items-center justify-center h-screen bg-black">
-        <div className="bg-gray-900 p-8 rounded-xl w-80 text-center">
-          <img
-            src="/mars3lo.png"
-            alt="Mars3lo"
-            className="mx-auto mb-4 w-32"
-          />
-          <h1 className="text-white text-xl mb-4">Mars3lo B2B</h1>
-          <input
-            className="w-full mb-2 p-2 rounded"
-            placeholder="ID"
-            value={loginId}
-            onChange={(e) => setLoginId(e.target.value)}
-          />
-          <input
-            type="password"
-            className="w-full mb-4 p-2 rounded"
-            placeholder="Password"
-            value={loginPw}
-            onChange={(e) => setLoginPw(e.target.value)}
-          />
-          <button
-            onClick={handleLogin}
-            className="bg-red-600 text-white px-4 py-2 rounded w-full"
-          >
-            Accedi
+      <div className="h-screen flex items-center justify-center bg-black text-white">
+        <div className="p-8 bg-gray-900 rounded-xl w-96 text-center">
+          <img src="/public/mars3lo.png" alt="logo" className="mx-auto mb-4 h-16" />
+          <h1 className="text-xl font-bold mb-4">Mars3lo B2B – Login</h1>
+          <input className="w-full mb-2 p-2 text-black" placeholder="ID" value={id} onChange={e => setId(e.target.value)} />
+          <input className="w-full mb-2 p-2 text-black" type="password" placeholder="Password" value={pwd} onChange={e => setPwd(e.target.value)} />
+          <button onClick={handleLogin} className="bg-blue-600 hover:bg-blue-800 w-full py-2 rounded">
+            Entra
           </button>
         </div>
       </div>
     );
   }
 
-  // 🔹 UI principale
   return (
-    <div className="min-h-screen bg-gray-100">
-      {/* Barra nera */}
-      <div className="bg-black p-4 flex justify-center items-center">
-        <img src="/mars3lo.png" alt="Mars3lo" className="h-10 mr-4" />
-        <h1 className="text-white text-xl font-bold">Mars3lo B2B</h1>
+    <div className="p-4">
+      {/* Barra superiore */}
+      <div className="bg-black text-white py-2 flex items-center justify-center mb-4">
+        <img src="/public/mars3lo.png" alt="logo" className="h-10 mr-2" />
+        <span className="text-lg font-bold">MARS3LO B2B</span>
       </div>
 
       {/* Cliente + Sconto */}
-      <div className="p-4 flex gap-4 items-center">
+      <div className="flex gap-2 mb-4">
         <input
+          className="border p-2 flex-1"
           placeholder="Cliente"
-          className="border p-2 rounded flex-1"
           value={cliente}
-          onChange={(e) => setCliente(e.target.value)}
+          onChange={e => setCliente(e.target.value)}
         />
-        <label className="flex items-center gap-2">
-          Sconto:
-          <input
-            type="number"
-            className="border p-2 rounded w-20"
-            value={sconto}
-            onChange={(e) => setSconto(parseInt(e.target.value) || 0)}
-          />
-          %
-        </label>
+        <input
+          className="border p-2 w-20"
+          type="number"
+          placeholder="Sconto %"
+          value={sconto}
+          onChange={e => setSconto(Number(e.target.value))}
+        />
       </div>
 
-      {/* Griglia articoli */}
-      <div className="p-4 space-y-6">
-        {Object.values(grouped).map((gruppo: any) => {
-          const rows: StockRow[] = sortTaglie(
-            gruppo.taglie.map((t: StockRow) => t.taglia)
-          ).map(
-            (taglia) =>
-              gruppo.taglie.find((t: StockRow) => t.taglia === taglia)!
-          );
+      {/* Filtro categorie */}
+      <div className="mb-4">
+        <select className="border p-2" value={categoriaFiltro} onChange={e => setCategoriaFiltro(e.target.value)}>
+          <option value="TUTTI">TUTTI</option>
+          <option value="GIACCHE">GIACCHE</option>
+          <option value="PANTALONI">PANTALONI</option>
+          <option value="GIUBBOTTI">GIUBBOTTI</option>
+          <option value="MAGLIE">MAGLIE</option>
+          <option value="PANTALONI FELPA">PANTALONI FELPA</option>
+          <option value="CAMICIE">CAMICIE</option>
+          <option value="CAPPOTTI">CAPPOTTI</option>
+          <option value="ALTRO">ALTRO</option>
+        </select>
+      </div>
 
-          const ordini: Record<string, number> = {};
+      {/* Griglia */}
+      {gruppi
+        .filter(g => categoriaFiltro === "TUTTI" || getCategoria(g.articolo) === categoriaFiltro)
+        .map((g, idx) => {
+          const taglie = sortTaglie(Object.keys(g.taglie));
+          const [q, setQ] = useState<Record<string, number>>({});
+
           return (
-            <div
-              key={gruppo.sku}
-              className="bg-white shadow rounded-lg p-4"
-            >
-              <h2 className="font-bold mb-2">
-                {gruppo.articolo} {gruppo.categoria} – {gruppo.colore} – €
-                {gruppo.prezzo}
-              </h2>
+            <div key={idx} className="border rounded-lg mb-4 p-2">
+              <div className="font-bold mb-2">
+                {g.articolo} – {getCategoria(g.articolo)} – {g.colore} – €{Number(g.prezzo).toFixed(2)}
+              </div>
               <div className="overflow-x-auto">
-                <table className="min-w-max border text-center">
+                <table className="min-w-full border">
                   <thead>
                     <tr>
-                      <th className="px-2">Taglia</th>
-                      {rows.map((r) => (
-                        <th key={r.taglia} className="px-2">
-                          {r.taglia}
-                        </th>
+                      {taglie.map(t => (
+                        <th key={t} className="px-2 py-1 border">{t}</th>
                       ))}
                     </tr>
                     <tr>
-                      <td className="px-2">Disp.</td>
-                      {rows.map((r) => (
-                        <td key={r.taglia}>{r.qty}</td>
+                      {taglie.map(t => (
+                        <td key={t} className="px-2 py-1 border text-center">{g.taglie[t]?.qty ?? 0}</td>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
-                      <td className="px-2">Ordina</td>
-                      {rows.map((r) => (
-                        <td key={r.taglia}>
+                      {taglie.map(t => (
+                        <td key={t} className="px-2 py-1 border">
                           <input
                             type="number"
-                            min={0}
-                            max={r.qty}
-                            className="w-16 p-1 border rounded"
-                            onChange={(e) =>
-                              (ordini[r.taglia] =
-                                parseInt(e.target.value) || 0)
-                            }
+                            min="0"
+                            className="w-16 border"
+                            value={q[t] || ""}
+                            onChange={e => setQ({ ...q, [t]: Number(e.target.value) })}
                           />
                         </td>
                       ))}
@@ -313,90 +265,52 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
-              <div className="mt-2 flex gap-2">
-                <button
-                  onClick={() => addToCart(rows, ordini)}
-                  className="bg-green-600 text-white px-4 py-1 rounded"
-                >
-                  Aggiungi
-                </button>
-                <button
-                  onClick={() =>
-                    setCarrello((prev) =>
-                      prev.filter(
-                        (p) =>
-                          !rows.find((r) => r.sku === p.sku)
-                      )
-                    )
-                  }
-                  className="bg-gray-600 text-white px-4 py-1 rounded"
-                >
-                  Svuota
-                </button>
+              <div className="flex gap-2 mt-2">
+                <button onClick={() => aggiungi(g, q)} className="bg-green-600 text-white px-4 py-1 rounded">Aggiungi</button>
+                <button onClick={() => svuota(g)} className="bg-red-600 text-white px-4 py-1 rounded">Svuota</button>
               </div>
             </div>
           );
         })}
-      </div>
 
       {/* Carrello */}
-      <div className="p-4 bg-white shadow mt-6">
-        <h2 className="font-bold mb-2">Ordine</h2>
-        <table className="w-full border">
-          <thead>
-            <tr>
-              <th>Articolo</th>
-              <th>Taglia</th>
-              <th>Colore</th>
-              <th>Q.tà</th>
-              <th>Prezzo</th>
-              <th>Totale</th>
+      <h2 className="text-xl font-bold mt-6 mb-2">Ordine</h2>
+      <table className="min-w-full border mb-4">
+        <thead>
+          <tr className="bg-gray-200">
+            <th className="px-2 py-1 border">Articolo</th>
+            <th className="px-2 py-1 border">Taglia</th>
+            <th className="px-2 py-1 border">Colore</th>
+            <th className="px-2 py-1 border">Q.tà</th>
+            <th className="px-2 py-1 border">Prezzo</th>
+            <th className="px-2 py-1 border">Totale</th>
+          </tr>
+        </thead>
+        <tbody>
+          {carrello.map((r, i) => (
+            <tr key={i}>
+              <td className="border px-2 py-1">{r.articolo}</td>
+              <td className="border px-2 py-1">{r.taglia}</td>
+              <td className="border px-2 py-1">{r.colore}</td>
+              <td className="border px-2 py-1">{r.ord}</td>
+              <td className="border px-2 py-1">€{r.prezzo.toFixed(2)}</td>
+              <td className="border px-2 py-1">€{(r.ord * r.prezzo).toFixed(2)}</td>
             </tr>
-          </thead>
-          <tbody>
-            {carrello.map((r) => (
-              <tr key={r.sku + r.taglia}>
-                <td>{r.articolo}</td>
-                <td>{r.taglia}</td>
-                <td>{r.colore}</td>
-                <td>{r.ordina}</td>
-                <td>€{r.prezzo}</td>
-                <td>€{r.ordina * r.prezzo}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <div className="mt-4">
-          <p>Totale: €{totale}</p>
-          <p>Totale scontato: €{totaleScontato.toFixed(2)}</p>
-        </div>
-        <div className="mt-4 flex flex-wrap gap-2">
-          <button
-            onClick={inviaOrdine}
-            className="bg-blue-600 text-white px-4 py-2 rounded"
-          >
-            Invia Ordine
-          </button>
-          <button
-            onClick={esportaCSV}
-            className="bg-gray-600 text-white px-4 py-2 rounded"
-          >
-            Esporta CSV
-          </button>
-          <button
-            onClick={esportaExcel}
-            className="bg-gray-600 text-white px-4 py-2 rounded"
-          >
-            Esporta Excel
-          </button>
-          <button
-            onClick={svuotaCarrello}
-            className="bg-red-600 text-white px-4 py-2 rounded"
-          >
-            Svuota Ordine
-          </button>
-        </div>
+          ))}
+        </tbody>
+      </table>
+
+      <div className="mb-4">
+        <div>Totale: €{totale.toFixed(2)}</div>
+        <div>Totale scontato: €{totaleScontato.toFixed(2)}</div>
+      </div>
+
+      <div className="flex gap-2">
+        <button onClick={exportCSV} className="bg-blue-600 text-white px-4 py-2 rounded">Esporta CSV</button>
+        <button onClick={exportExcel} className="bg-green-600 text-white px-4 py-2 rounded">Esporta Excel</button>
+        <button onClick={exportPDF} className="bg-red-600 text-white px-4 py-2 rounded">Esporta PDF</button>
       </div>
     </div>
   );
 }
+
