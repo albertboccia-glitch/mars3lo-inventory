@@ -1,15 +1,14 @@
 import React, { useState, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
 import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import "jspdf-autotable";
 import * as XLSX from "xlsx";
 
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL!,
-  import.meta.env.VITE_SUPABASE_ANON_KEY!
-);
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-// 🔹 funzione classificazione articoli
+// Funzione classificazione categorie
 function getCategoria(code: string): string {
   const c = code.toUpperCase();
   if (c.startsWith("GB")) return "GIUBBOTTI";
@@ -22,294 +21,240 @@ function getCategoria(code: string): string {
   return "ALTRO";
 }
 
-// 🔹 ordinamento taglie numeriche e lettere
+// Ordinamento taglie
 function sortTaglie(taglie: string[]): string[] {
-  const ordineLettere = ["XS", "S", "M", "L", "XL", "XXL"];
-  return taglie.sort((a, b) => {
-    const na = parseInt(a);
-    const nb = parseInt(b);
-    if (!isNaN(na) && !isNaN(nb)) return na - nb;
-    if (!isNaN(na)) return -1;
-    if (!isNaN(nb)) return 1;
-    return ordineLettere.indexOf(a) - ordineLettere.indexOf(b);
-  });
+  const numeric = taglie.filter(t => /^\d+$/.test(t)).map(Number).sort((a, b) => a - b).map(String);
+  const letters = taglie.filter(t => /^[A-Z]+$/.test(t));
+  const order = ["XS", "S", "M", "L", "XL", "XXL"];
+  const lettersSorted = letters.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  return [...numeric, ...lettersSorted];
 }
 
-type StockRow = {
+interface StockRow {
   sku: string;
   articolo: string;
+  categoria: string;
   taglia: string;
   colore: string;
   qty: number;
   prezzo: number;
-};
+}
 
-type CarrelloRow = StockRow & { ord: number };
+interface CarrelloItem extends StockRow {
+  ord: number;
+}
 
 export default function App() {
-  const [utente, setUtente] = useState<"login" | "showroom" | "magazzino">("login");
-  const [id, setId] = useState("");
-  const [pwd, setPwd] = useState("");
-  const [stock, setStock] = useState<StockRow[]>([]);
-  const [carrello, setCarrello] = useState<CarrelloRow[]>([]);
+  const [role, setRole] = useState<string | null>(null);
   const [cliente, setCliente] = useState("");
   const [sconto, setSconto] = useState(0);
+  const [stock, setStock] = useState<StockRow[]>([]);
+  const [carrello, setCarrello] = useState<CarrelloItem[]>([]);
   const [categoriaFiltro, setCategoriaFiltro] = useState("TUTTI");
 
-  // 🔹 login
-  function handleLogin() {
-    if (id === "Mars3loBo" && pwd === "Francesco01") setUtente("showroom");
-    else if (id === "Mars3loNa" && pwd === "Gbesse01") setUtente("magazzino");
+  // Login semplice
+  const [id, setId] = useState("");
+  const [pw, setPw] = useState("");
+  const handleLogin = () => {
+    if (id === "Mars3loBo" && pw === "Francesco01") setRole("showroom");
+    else if (id === "Mars3loNa" && pw === "Gbesse01") setRole("magazzino");
     else alert("Credenziali errate");
-  }
+  };
 
-  // 🔹 fetch stock da Supabase
+  // Carica stock da Supabase
   useEffect(() => {
-    if (utente !== "login") {
-      supabase.from("stock").select("*").then(({ data }) => {
-        if (data) setStock(data as StockRow[]);
-      });
-    }
-  }, [utente]);
+    if (!role) return;
+    (async () => {
+      const { data } = await supabase.from("stock").select("*");
+      if (data) setStock(data as StockRow[]);
+    })();
+  }, [role]);
 
-  // 🔹 raggruppa stock per articolo/colore
-  const gruppi = Object.values(
-    stock.reduce((acc: any, r) => {
-      const key = r.articolo + "-" + r.colore;
-      if (!acc[key]) {
-        acc[key] = {
-          articolo: r.articolo,
-          colore: r.colore,
-          prezzo: r.prezzo,
-          taglie: {},
-        };
-      }
-      acc[key].taglie[r.taglia] = r;
-      return acc;
-    }, {})
-  );
+  // Aggiungi articoli al carrello
+  const aggiungiAlCarrello = (gruppo: StockRow[], inputs: Record<string, number>) => {
+    const nuovi = gruppo
+      .filter(r => inputs[r.taglia] > 0)
+      .map(r => ({
+        ...r,
+        ord: inputs[r.taglia]
+      }));
+    setCarrello(prev => {
+      const altri = prev.filter(p => p.articolo !== gruppo[0].articolo || p.colore !== gruppo[0].colore);
+      return [...altri, ...nuovi];
+    });
+  };
 
-  // 🔹 aggiungi al carrello
-  function aggiungi(gruppo: any, quanti: Record<string, number>) {
-    const nuove: CarrelloRow[] = [];
-    for (const t in quanti) {
-      const q = quanti[t];
-      if (q > 0) {
-        nuove.push({ ...gruppo.taglie[t], ord: q });
-      }
-    }
-    setCarrello([...carrello.filter(c => !(c.articolo === gruppo.articolo && c.colore === gruppo.colore)), ...nuove]);
-  }
+  const svuotaCarrello = () => setCarrello([]);
 
-  // 🔹 svuota riga
-  function svuota(gruppo: any) {
-    setCarrello(carrello.filter(c => !(c.articolo === gruppo.articolo && c.colore === gruppo.colore)));
-  }
+  // Esporta PDF ordine
+  const esportaPDF = () => {
+    const doc = new jsPDF();
+    doc.text("Ordine Cliente: " + cliente, 10, 10);
+    (doc as any).autoTable({
+      head: [["Articolo", "Taglia", "Colore", "Q.tà", "Prezzo", "Totale"]],
+      body: carrello.map(c => [
+        c.articolo,
+        c.taglia,
+        c.colore,
+        c.ord,
+        "€" + Number(c.prezzo).toFixed(2),
+        "€" + (c.ord * c.prezzo).toFixed(2)
+      ])
+    });
+    const totale = carrello.reduce((s, c) => s + c.ord * c.prezzo, 0);
+    const totScontato = totale * (1 - sconto / 100);
+    doc.text(`Totale: €${totale.toFixed(2)}`, 10, (doc as any).lastAutoTable.finalY + 10);
+    doc.text(`Totale scontato: €${totScontato.toFixed(2)}`, 10, (doc as any).lastAutoTable.finalY + 20);
+    doc.save("ordine.pdf");
+  };
 
-  // 🔹 totali
-  const totale = carrello.reduce((s, r) => s + r.ord * r.prezzo, 0);
-  const totaleScontato = totale * (1 - sconto / 100);
-
-  // 🔹 esporta CSV
-  function exportCSV() {
-    const header = ["Articolo", "Taglia", "Colore", "Q.tà", "Prezzo", "Totale"];
-    const rows = carrello.map(r => [
-      r.articolo,
-      r.taglia,
-      r.colore,
-      r.ord,
-      r.prezzo.toFixed(2),
-      (r.ord * r.prezzo).toFixed(2),
-    ]);
-    const csv = [header, ...rows].map(r => r.join(";")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "ordine.csv";
-    a.click();
-  }
-
-  // 🔹 esporta Excel
-  function exportExcel() {
+  // Esporta Excel ordine
+  const esportaExcel = () => {
     const ws = XLSX.utils.json_to_sheet(
-      carrello.map(r => ({
-        Articolo: r.articolo,
-        Taglia: r.taglia,
-        Colore: r.colore,
-        Quantità: r.ord,
-        Prezzo: r.prezzo.toFixed(2),
-        Totale: (r.ord * r.prezzo).toFixed(2),
+      carrello.map(c => ({
+        Articolo: c.articolo,
+        Taglia: c.taglia,
+        Colore: c.colore,
+        Quantità: c.ord,
+        Prezzo: Number(c.prezzo).toFixed(2),
+        Totale: (c.ord * c.prezzo).toFixed(2)
       }))
     );
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Ordine");
     XLSX.writeFile(wb, "ordine.xlsx");
-  }
+  };
 
-  // 🔹 esporta PDF
-  function exportPDF() {
-    const doc = new jsPDF();
-    doc.text("Ordine Cliente: " + cliente, 10, 10);
-    autoTable(doc, {
-      head: [["Articolo", "Taglia", "Colore", "Q.tà", "Prezzo", "Totale"]],
-      body: carrello.map(r => [
-        r.articolo,
-        r.taglia,
-        r.colore,
-        r.ord,
-        r.prezzo.toFixed(2),
-        (r.ord * r.prezzo).toFixed(2),
-      ]),
-    });
-    doc.text(`Totale: €${totale.toFixed(2)}`, 10, doc.lastAutoTable.finalY + 10);
-    doc.text(`Totale scontato: €${totaleScontato.toFixed(2)}`, 10, doc.lastAutoTable.finalY + 20);
-    doc.save("ordine.pdf");
-  }
-
-  if (utente === "login") {
+  if (!role) {
     return (
       <div className="h-screen flex items-center justify-center bg-black text-white">
-        <div className="p-8 bg-gray-900 rounded-xl w-96 text-center">
-          <img src="/public/mars3lo.png" alt="logo" className="mx-auto mb-4 h-16" />
-          <h1 className="text-xl font-bold mb-4">Mars3lo B2B – Login</h1>
-          <input className="w-full mb-2 p-2 text-black" placeholder="ID" value={id} onChange={e => setId(e.target.value)} />
-          <input className="w-full mb-2 p-2 text-black" type="password" placeholder="Password" value={pwd} onChange={e => setPwd(e.target.value)} />
-          <button onClick={handleLogin} className="bg-blue-600 hover:bg-blue-800 w-full py-2 rounded">
-            Entra
-          </button>
+        <div className="p-6 bg-gray-900 rounded-lg">
+          <img src="/public/public/mars3lo.png" alt="Mars3lo" className="mx-auto mb-4 w-32" />
+          <h1 className="text-center mb-4">Login</h1>
+          <input className="mb-2 p-2 w-full text-black" placeholder="ID" value={id} onChange={e => setId(e.target.value)} />
+          <input className="mb-2 p-2 w-full text-black" type="password" placeholder="Password" value={pw} onChange={e => setPw(e.target.value)} />
+          <button className="bg-blue-600 w-full p-2" onClick={handleLogin}>Entra</button>
         </div>
       </div>
     );
   }
 
+  // Raggruppa stock per articolo/colore
+  const gruppi = Object.values(
+    stock.reduce((acc: any, r) => {
+      const key = r.articolo + "_" + r.colore;
+      if (!acc[key]) acc[key] = { ...r, taglie: {} };
+      acc[key].taglie[r.taglia] = r.qty;
+      acc[key].prezzo = r.prezzo;
+      return acc;
+    }, {})
+  );
+
+  const filtrati = categoriaFiltro === "TUTTI"
+    ? gruppi
+    : gruppi.filter((g: any) => getCategoria(g.articolo) === categoriaFiltro);
+
+  const totale = carrello.reduce((s, c) => s + c.ord * c.prezzo, 0);
+  const totScontato = totale * (1 - sconto / 100);
+
   return (
     <div className="p-4">
-      {/* Barra superiore */}
-      <div className="bg-black text-white py-2 flex items-center justify-center mb-4">
-        <img src="/public/mars3lo.png" alt="logo" className="h-10 mr-2" />
-        <span className="text-lg font-bold">MARS3LO B2B</span>
+      <div className="bg-black text-white flex items-center justify-center h-16 mb-4">
+        <img src="/public/public/mars3lo.png" alt="logo" className="h-12 mr-2" />
+        <span className="text-xl font-bold">MARS3LO B2B</span>
       </div>
 
-      {/* Cliente + Sconto */}
-      <div className="flex gap-2 mb-4">
-        <input
-          className="border p-2 flex-1"
-          placeholder="Cliente"
-          value={cliente}
-          onChange={e => setCliente(e.target.value)}
-        />
-        <input
-          className="border p-2 w-20"
-          type="number"
-          placeholder="Sconto %"
-          value={sconto}
-          onChange={e => setSconto(Number(e.target.value))}
-        />
-      </div>
-
-      {/* Filtro categorie */}
-      <div className="mb-4">
-        <select className="border p-2" value={categoriaFiltro} onChange={e => setCategoriaFiltro(e.target.value)}>
-          <option value="TUTTI">TUTTI</option>
-          <option value="GIACCHE">GIACCHE</option>
-          <option value="PANTALONI">PANTALONI</option>
-          <option value="GIUBBOTTI">GIUBBOTTI</option>
-          <option value="MAGLIE">MAGLIE</option>
-          <option value="PANTALONI FELPA">PANTALONI FELPA</option>
-          <option value="CAMICIE">CAMICIE</option>
-          <option value="CAPPOTTI">CAPPOTTI</option>
-          <option value="ALTRO">ALTRO</option>
-        </select>
-      </div>
-
-      {/* Griglia */}
-      {gruppi
-        .filter(g => categoriaFiltro === "TUTTI" || getCategoria(g.articolo) === categoriaFiltro)
-        .map((g, idx) => {
-          const taglie = sortTaglie(Object.keys(g.taglie));
-          const [q, setQ] = useState<Record<string, number>>({});
-
-          return (
-            <div key={idx} className="border rounded-lg mb-4 p-2">
-              <div className="font-bold mb-2">
-                {g.articolo} – {getCategoria(g.articolo)} – {g.colore} – €{Number(g.prezzo).toFixed(2)}
-              </div>
-              <div className="overflow-x-auto">
-                <table className="min-w-full border">
-                  <thead>
-                    <tr>
-                      {taglie.map(t => (
-                        <th key={t} className="px-2 py-1 border">{t}</th>
-                      ))}
-                    </tr>
-                    <tr>
-                      {taglie.map(t => (
-                        <td key={t} className="px-2 py-1 border text-center">{g.taglie[t]?.qty ?? 0}</td>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      {taglie.map(t => (
-                        <td key={t} className="px-2 py-1 border">
-                          <input
-                            type="number"
-                            min="0"
-                            className="w-16 border"
-                            value={q[t] || ""}
-                            onChange={e => setQ({ ...q, [t]: Number(e.target.value) })}
-                          />
-                        </td>
-                      ))}
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              <div className="flex gap-2 mt-2">
-                <button onClick={() => aggiungi(g, q)} className="bg-green-600 text-white px-4 py-1 rounded">Aggiungi</button>
-                <button onClick={() => svuota(g)} className="bg-red-600 text-white px-4 py-1 rounded">Svuota</button>
-              </div>
+      {role === "showroom" && (
+        <>
+          <div className="mb-4 flex flex-col sm:flex-row gap-2">
+            <input className="p-2 border w-full" placeholder="Cliente" value={cliente} onChange={e => setCliente(e.target.value)} />
+            <div className="flex items-center gap-2">
+              <label>Sconto:</label>
+              <input type="number" className="p-2 border w-20" value={sconto} onChange={e => setSconto(Number(e.target.value))} />%
             </div>
-          );
-        })}
+            <select className="p-2 border" value={categoriaFiltro} onChange={e => setCategoriaFiltro(e.target.value)}>
+              <option value="TUTTI">Tutti</option>
+              <option value="GIACCHE">Giacche</option>
+              <option value="GIUBBOTTI">Giubbotti</option>
+              <option value="MAGLIE">Maglie</option>
+              <option value="PANTALONI">Pantaloni</option>
+              <option value="PANTALONI FELPA">Pantaloni Felpa</option>
+              <option value="CAPPOTTI">Cappotti</option>
+              <option value="CAMICIE">Camicie</option>
+            </select>
+          </div>
 
-      {/* Carrello */}
-      <h2 className="text-xl font-bold mt-6 mb-2">Ordine</h2>
-      <table className="min-w-full border mb-4">
-        <thead>
-          <tr className="bg-gray-200">
-            <th className="px-2 py-1 border">Articolo</th>
-            <th className="px-2 py-1 border">Taglia</th>
-            <th className="px-2 py-1 border">Colore</th>
-            <th className="px-2 py-1 border">Q.tà</th>
-            <th className="px-2 py-1 border">Prezzo</th>
-            <th className="px-2 py-1 border">Totale</th>
-          </tr>
-        </thead>
-        <tbody>
-          {carrello.map((r, i) => (
-            <tr key={i}>
-              <td className="border px-2 py-1">{r.articolo}</td>
-              <td className="border px-2 py-1">{r.taglia}</td>
-              <td className="border px-2 py-1">{r.colore}</td>
-              <td className="border px-2 py-1">{r.ord}</td>
-              <td className="border px-2 py-1">€{r.prezzo.toFixed(2)}</td>
-              <td className="border px-2 py-1">€{(r.ord * r.prezzo).toFixed(2)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+          {filtrati.map((g: any) => {
+            const taglie = sortTaglie(Object.keys(g.taglie));
+            const [inputs, setInputs] = useState<Record<string, number>>({});
+            return (
+              <div key={g.articolo + g.colore} className="mb-6 border p-2 rounded">
+                <h2 className="font-bold">{g.articolo} {getCategoria(g.articolo)} – {g.colore} – €{Number(g.prezzo).toFixed(2)}</h2>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full border text-center">
+                    <thead>
+                      <tr>
+                        {taglie.map(t => <th key={t} className="px-2 py-1">{t}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        {taglie.map(t => <td key={t}>{g.taglie[t] ?? 0}</td>)}
+                      </tr>
+                      <tr>
+                        {taglie.map(t => (
+                          <td key={t}>
+                            <input
+                              type="number"
+                              className="w-12 p-1 border"
+                              value={inputs[t] || ""}
+                              onChange={e => setInputs({ ...inputs, [t]: Number(e.target.value) })}
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div className="mt-2 flex gap-2">
+                  <button className="bg-green-500 text-white px-3 py-1" onClick={() => aggiungiAlCarrello(stock.filter(r => r.articolo === g.articolo && r.colore === g.colore), inputs)}>Aggiungi</button>
+                  <button className="bg-red-500 text-white px-3 py-1" onClick={() => setCarrello(prev => prev.filter(c => c.articolo !== g.articolo || c.colore !== g.colore))}>Svuota</button>
+                </div>
+              </div>
+            );
+          })}
 
-      <div className="mb-4">
-        <div>Totale: €{totale.toFixed(2)}</div>
-        <div>Totale scontato: €{totaleScontato.toFixed(2)}</div>
-      </div>
-
-      <div className="flex gap-2">
-        <button onClick={exportCSV} className="bg-blue-600 text-white px-4 py-2 rounded">Esporta CSV</button>
-        <button onClick={exportExcel} className="bg-green-600 text-white px-4 py-2 rounded">Esporta Excel</button>
-        <button onClick={exportPDF} className="bg-red-600 text-white px-4 py-2 rounded">Esporta PDF</button>
-      </div>
+          <h2 className="font-bold text-xl mt-6">Ordine</h2>
+          <table className="min-w-full border text-center">
+            <thead>
+              <tr>
+                <th>Articolo</th><th>Taglia</th><th>Colore</th><th>Q.tà</th><th>Prezzo</th><th>Totale</th>
+              </tr>
+            </thead>
+            <tbody>
+              {carrello.map((c, i) => (
+                <tr key={i}>
+                  <td>{c.articolo}</td>
+                  <td>{c.taglia}</td>
+                  <td>{c.colore}</td>
+                  <td>{c.ord}</td>
+                  <td>€{Number(c.prezzo).toFixed(2)}</td>
+                  <td>€{(c.ord * c.prezzo).toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="mt-2">
+            <p>Totale: €{totale.toFixed(2)}</p>
+            <p>Totale scontato: €{totScontato.toFixed(2)}</p>
+            <div className="flex gap-2 mt-2">
+              <button className="bg-red-600 text-white px-3 py-1" onClick={svuotaCarrello}>Svuota Ordine</button>
+              <button className="bg-blue-600 text-white px-3 py-1" onClick={esportaPDF}>Esporta PDF</button>
+              <button className="bg-green-600 text-white px-3 py-1" onClick={esportaExcel}>Esporta Excel</button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
