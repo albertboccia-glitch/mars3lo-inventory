@@ -19,10 +19,10 @@ const sortTaglie = (arr: string[]) => {
     const isNumA = !isNaN(numA);
     const isNumB = !isNaN(numB);
 
-    if (isNumA && isNumB) return numA - numB; // numeri
+    if (isNumA && isNumB) return numA - numB;
     if (!isNumA && !isNumB)
-      return orderLetters.indexOf(a) - orderLetters.indexOf(b); // lettere
-    return isNumA ? -1 : 1; // numeri prima delle lettere
+      return orderLetters.indexOf(a) - orderLetters.indexOf(b);
+    return isNumA ? -1 : 1;
   });
 };
 
@@ -32,7 +32,7 @@ function getCategoria(code: string): string {
   if (c.startsWith("GB")) return "GIUBBOTTI";
   if (c.startsWith("MG")) return "MAGLIE";
   if (c.startsWith("PM")) return "PANTALONI FELPA";
-  if (c.startsWith("CAP")) return "CAPPOTTI"; // 👈 aggiunta nuova categoria
+  if (c.startsWith("CAP")) return "CAPPOTTI";
   if (c.startsWith("P")) return "PANTALONI";
   if (c.startsWith("G")) return "GIACCHE";
   if (c.startsWith("C")) return "CAMICIE";
@@ -57,6 +57,8 @@ export default function App() {
   const [carrello, setCarrello] = useState<CarrelloRow[]>([]);
   const [cliente, setCliente] = useState("");
   const [sconto, setSconto] = useState(0);
+  const [filtro, setFiltro] = useState("TUTTI");
+  const [ricerca, setRicerca] = useState("");
 
   // 🔹 Login fittizio
   const [loginId, setLoginId] = useState("");
@@ -84,15 +86,23 @@ export default function App() {
         setStock(
           (data as StockRow[]).map((r) => ({
             ...r,
-            categoria: getCategoria(r.sku), // 👈 calcola categoria
+            categoria: getCategoria(r.sku),
           }))
         );
     };
     fetchStock();
   }, []);
 
+  // 🔹 Filtraggio stock
+  const filteredStock = stock.filter(
+    (s) =>
+      (filtro === "TUTTI" || s.categoria === filtro) &&
+      (s.articolo.toLowerCase().includes(ricerca.toLowerCase()) ||
+        s.sku.toLowerCase().includes(ricerca.toLowerCase()))
+  );
+
   // 🔹 Raggruppamento articoli
-  const grouped = stock.reduce((acc: any, row) => {
+  const grouped = filteredStock.reduce((acc: any, row) => {
     const key = row.articolo + "_" + row.colore;
     if (!acc[key]) acc[key] = { ...row, taglie: [] as StockRow[] };
     acc[key].taglie.push(row);
@@ -108,11 +118,8 @@ export default function App() {
           : null
       )
       .filter(Boolean) as CarrelloRow[];
-    // 🔹 Sostituisce eventuali righe già esistenti (non duplica)
     setCarrello((prev) => {
-      const senza = prev.filter(
-        (p) => !nuovi.find((n) => n.sku === p.sku)
-      );
+      const senza = prev.filter((p) => !nuovi.find((n) => n.sku === p.sku));
       return [...senza, ...nuovi];
     });
   };
@@ -121,10 +128,7 @@ export default function App() {
   const svuotaCarrello = () => setCarrello([]);
 
   // 🔹 Totali
-  const totale = carrello.reduce(
-    (sum, r) => sum + r.prezzo * r.ordina,
-    0
-  );
+  const totale = carrello.reduce((sum, r) => sum + r.prezzo * r.ordina, 0);
   const totaleScontato = totale * (1 - sconto / 100);
 
   // 🔹 Esporta CSV
@@ -144,12 +148,10 @@ export default function App() {
       r.taglia,
       r.colore,
       r.ordina,
-      r.prezzo.toFixed(2), // 👈 forza due decimali
+      r.prezzo.toFixed(2),
       (r.ordina * r.prezzo).toFixed(2),
     ]);
-    const csv = [header, ...rows]
-      .map((x) => x.join(","))
-      .join("\n");
+    const csv = [header, ...rows].map((x) => x.join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -167,13 +169,37 @@ export default function App() {
         Taglia: r.taglia,
         Colore: r.colore,
         Quantità: r.ordina,
-        Prezzo: r.prezzo.toFixed(2), // 👈 forza due decimali
+        Prezzo: r.prezzo.toFixed(2),
         TotaleRiga: (r.ordina * r.prezzo).toFixed(2),
       }))
     );
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Ordine");
     XLSX.writeFile(wb, "ordine.xlsx");
+  };
+
+  // 🔹 Esporta PDF
+  const esportaPDF = () => {
+    const doc = new jsPDF();
+    doc.text(`Ordine cliente: ${cliente}`, 10, 10);
+    (doc as any).autoTable({
+      head: [["Articolo", "Categoria", "Taglia", "Colore", "Q.tà", "Prezzo", "Totale"]],
+      body: carrello.map((r) => [
+        r.articolo,
+        r.categoria,
+        r.taglia,
+        r.colore,
+        r.ordina,
+        `€${r.prezzo.toFixed(2)}`,
+        `€${(r.ordina * r.prezzo).toFixed(2)}`,
+      ]),
+    });
+    doc.text(
+      `Totale: €${totale.toFixed(2)}  Totale scontato: €${totaleScontato.toFixed(2)}`,
+      10,
+      (doc as any).lastAutoTable.finalY + 10
+    );
+    doc.save(`ordine_${cliente}.pdf`);
   };
 
   // 🔹 Invia ordine su Supabase
@@ -214,11 +240,7 @@ export default function App() {
     return (
       <div className="flex items-center justify-center h-screen bg-black">
         <div className="bg-gray-900 p-8 rounded-xl w-80 text-center">
-          <img
-            src="/mars3lo.png"
-            alt="Mars3lo"
-            className="mx-auto mb-4 w-32"
-          />
+          <img src="/mars3lo.png" alt="Mars3lo" className="mx-auto mb-4 w-32" />
           <h1 className="text-white text-xl mb-4">Mars3lo B2B</h1>
           <input
             className="w-full mb-2 p-2 rounded"
@@ -273,22 +295,43 @@ export default function App() {
         </label>
       </div>
 
+      {/* Filtro categorie + ricerca */}
+      <div className="px-4 mb-4 flex flex-wrap gap-4 items-center">
+        <div>
+          <label className="mr-2">Categoria:</label>
+          <select
+            value={filtro}
+            onChange={(e) => setFiltro(e.target.value)}
+            className="border p-2 rounded"
+          >
+            <option value="TUTTI">Tutti</option>
+            <option value="GIACCHE">Giacche</option>
+            <option value="PANTALONI">Pantaloni</option>
+            <option value="GIUBBOTTI">Giubbotti</option>
+            <option value="MAGLIE">Maglie</option>
+            <option value="CAPPOTTI">Cappotti</option>
+            <option value="CAMICIE">Camicie</option>
+          </select>
+        </div>
+        <input
+          type="text"
+          placeholder="Cerca per codice o articolo..."
+          className="border p-2 rounded flex-1"
+          value={ricerca}
+          onChange={(e) => setRicerca(e.target.value)}
+        />
+      </div>
+
       {/* Griglia articoli */}
       <div className="p-4 space-y-6">
         {Object.values(grouped).map((gruppo: any) => {
           const rows: StockRow[] = sortTaglie(
             gruppo.taglie.map((t: StockRow) => t.taglia)
-          ).map(
-            (taglia) =>
-              gruppo.taglie.find((t: StockRow) => t.taglia === taglia)!
-          );
+          ).map((taglia) => gruppo.taglie.find((t: StockRow) => t.taglia === taglia)!);
 
           const ordini: Record<string, number> = {};
           return (
-            <div
-              key={gruppo.sku}
-              className="bg-white shadow rounded-lg p-4"
-            >
+            <div key={gruppo.sku} className="bg-white shadow rounded-lg p-4">
               <h2 className="font-bold mb-2">
                 {gruppo.articolo} {gruppo.categoria} – {gruppo.colore} – €
                 {Number(gruppo.prezzo).toFixed(2)}
@@ -322,8 +365,7 @@ export default function App() {
                             max={r.qty}
                             className="w-16 p-1 border rounded"
                             onChange={(e) =>
-                              (ordini[r.taglia] =
-                                parseInt(e.target.value) || 0)
+                              (ordini[r.taglia] = parseInt(e.target.value) || 0)
                             }
                           />
                         </td>
@@ -342,10 +384,7 @@ export default function App() {
                 <button
                   onClick={() =>
                     setCarrello((prev) =>
-                      prev.filter(
-                        (p) =>
-                          !rows.find((r) => r.sku === p.sku)
-                      )
+                      prev.filter((p) => !rows.find((r) => r.sku === p.sku))
                     )
                   }
                   className="bg-gray-600 text-white px-4 py-1 rounded"
@@ -390,28 +429,19 @@ export default function App() {
           <p>Totale scontato: €{totaleScontato.toFixed(2)}</p>
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
-          <button
-            onClick={inviaOrdine}
-            className="bg-blue-600 text-white px-4 py-2 rounded"
-          >
+          <button onClick={inviaOrdine} className="bg-blue-600 text-white px-4 py-2 rounded">
             Invia Ordine
           </button>
-          <button
-            onClick={esportaCSV}
-            className="bg-gray-600 text-white px-4 py-2 rounded"
-          >
+          <button onClick={esportaCSV} className="bg-gray-600 text-white px-4 py-2 rounded">
             Esporta CSV
           </button>
-          <button
-            onClick={esportaExcel}
-            className="bg-gray-600 text-white px-4 py-2 rounded"
-          >
+          <button onClick={esportaExcel} className="bg-gray-600 text-white px-4 py-2 rounded">
             Esporta Excel
           </button>
-          <button
-            onClick={svuotaCarrello}
-            className="bg-red-600 text-white px-4 py-2 rounded"
-          >
+          <button onClick={esportaPDF} className="bg-red-600 text-white px-4 py-2 rounded">
+            Esporta PDF
+          </button>
+          <button onClick={svuotaCarrello} className="bg-red-600 text-white px-4 py-2 rounded">
             Svuota Ordine
           </button>
         </div>
