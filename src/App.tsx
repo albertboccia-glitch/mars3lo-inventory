@@ -52,13 +52,15 @@ type StockRow = {
 type CarrelloRow = StockRow & { ordina: number };
 
 export default function App() {
-  const [user, setUser] = useState<null | { ruolo: string }>({ ruolo: "" });
   const [stock, setStock] = useState<StockRow[]>([]);
   const [carrello, setCarrello] = useState<CarrelloRow[]>([]);
   const [cliente, setCliente] = useState("");
   const [sconto, setSconto] = useState(0);
   const [filtro, setFiltro] = useState("TUTTI");
   const [ricerca, setRicerca] = useState("");
+
+  // 🔹 Stato input ordini (NEW)
+  const [ordiniInput, setOrdiniInput] = useState<Record<string, Record<string, number>>>({});
 
   // 🔹 Login fittizio
   const [loginId, setLoginId] = useState("");
@@ -67,10 +69,8 @@ export default function App() {
 
   const handleLogin = () => {
     if (loginId === "Mars3loBo" && loginPw === "Francesco01") {
-      setUser({ ruolo: "showroom" });
       setLogged(true);
     } else if (loginId === "Mars3loNa" && loginPw === "Gbesse01") {
-      setUser({ ruolo: "magazzino" });
       setLogged(true);
     } else {
       alert("Credenziali errate");
@@ -113,9 +113,7 @@ export default function App() {
   const addToCart = (rows: StockRow[], ordini: Record<string, number>) => {
     const nuovi = rows
       .map((r) =>
-        ordini[r.taglia]
-          ? { ...r, ordina: ordini[r.taglia] }
-          : null
+        ordini[r.taglia] ? { ...r, ordina: ordini[r.taglia] } : null
       )
       .filter(Boolean) as CarrelloRow[];
     setCarrello((prev) => {
@@ -125,7 +123,10 @@ export default function App() {
   };
 
   // 🔹 Svuota carrello
-  const svuotaCarrello = () => setCarrello([]);
+  const svuotaCarrello = () => {
+    setCarrello([]);
+    setOrdiniInput({}); // 🔹 reset input ordini
+  };
 
   // 🔹 Totali
   const totale = carrello.reduce((sum, r) => sum + r.prezzo * r.ordina, 0);
@@ -133,15 +134,7 @@ export default function App() {
 
   // 🔹 Esporta CSV
   const esportaCSV = () => {
-    const header = [
-      "Articolo",
-      "Categoria",
-      "Taglia",
-      "Colore",
-      "Q.tà",
-      "Prezzo",
-      "Totale Riga",
-    ];
+    const header = ["Articolo", "Categoria", "Taglia", "Colore", "Q.tà", "Prezzo", "Totale Riga"];
     const rows = carrello.map((r) => [
       r.articolo,
       r.categoria,
@@ -327,9 +320,10 @@ export default function App() {
         {Object.values(grouped).map((gruppo: any) => {
           const rows: StockRow[] = sortTaglie(
             gruppo.taglie.map((t: StockRow) => t.taglia)
-          ).map((taglia) => gruppo.taglie.find((t: StockRow) => t.taglia === taglia)!);
+          ).map((taglia) =>
+            gruppo.taglie.find((t: StockRow) => t.taglia === taglia)!
+          );
 
-          const ordini: Record<string, number> = {};
           return (
             <div key={gruppo.sku} className="bg-white shadow rounded-lg p-4">
               <h2 className="font-bold mb-2">
@@ -364,9 +358,17 @@ export default function App() {
                             min={0}
                             max={r.qty}
                             className="w-16 p-1 border rounded"
-                            onChange={(e) =>
-                              (ordini[r.taglia] = parseInt(e.target.value) || 0)
-                            }
+                            value={ordiniInput[gruppo.sku]?.[r.taglia] || 0}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value) || 0;
+                              setOrdiniInput((prev) => ({
+                                ...prev,
+                                [gruppo.sku]: {
+                                  ...prev[gruppo.sku],
+                                  [r.taglia]: val,
+                                },
+                              }));
+                            }}
                           />
                         </td>
                       ))}
@@ -376,17 +378,24 @@ export default function App() {
               </div>
               <div className="mt-2 flex gap-2">
                 <button
-                  onClick={() => addToCart(rows, ordini)}
+                  onClick={() => addToCart(rows, ordiniInput[gruppo.sku] || {})}
                   className="bg-green-600 text-white px-4 py-1 rounded"
                 >
                   Aggiungi
                 </button>
                 <button
-                  onClick={() =>
+                  onClick={() => {
                     setCarrello((prev) =>
-                      prev.filter((p) => !rows.find((r) => r.sku === p.sku))
-                    )
-                  }
+                      prev.filter(
+                        (p) => !rows.find((r) => r.sku === p.sku)
+                      )
+                    );
+                    setOrdiniInput((prev) => {
+                      const copia = { ...prev };
+                      delete copia[gruppo.sku];
+                      return copia;
+                    });
+                  }}
                   className="bg-gray-600 text-white px-4 py-1 rounded"
                 >
                   Svuota
