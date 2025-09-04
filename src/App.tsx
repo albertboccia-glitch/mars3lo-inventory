@@ -363,22 +363,24 @@ export default function App() {
                       {rows.map((r) => (
                         <td key={r.taglia}>
                           <input
-                            type="number"
-                            min={0}
-                            max={r.qty}
-                            className="w-16 p-1 border rounded"
-                            value={ordiniInput[gruppo.sku]?.[r.taglia] || 0}
-                            onChange={(e) => {
-                              const val = parseInt(e.target.value) || 0;
-                              setOrdiniInput((prev) => ({
-                                ...prev,
-                                [gruppo.sku]: {
-                                  ...prev[gruppo.sku],
-                                  [r.taglia]: val,
-                                },
-                              }));
-                            }}
-                          />
+  type="number"
+  min={0}
+  max={r.qty}
+  className="w-16 p-1 border rounded text-center"
+  value={ordiniInput[gruppo.sku]?.[r.taglia] ?? ""}
+  onFocus={(e) => e.target.select()} // 🔹 seleziona tutto il contenuto quando entri
+  onChange={(e) => {
+    const val = parseInt(e.target.value) || 0;
+    setOrdiniInput((prev) => ({
+      ...prev,
+      [gruppo.sku]: {
+        ...prev[gruppo.sku],
+        [r.taglia]: val,
+      },
+    }));
+  }}
+/>
+
                         </td>
                       ))}
                     </tr>
