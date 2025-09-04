@@ -59,8 +59,10 @@ export default function App() {
   const [filtro, setFiltro] = useState("TUTTI");
   const [ricerca, setRicerca] = useState("");
 
-  // 🔹 Stato input ordini (NEW)
+  // 🔹 Stato input ordini
   const [ordiniInput, setOrdiniInput] = useState<Record<string, Record<string, number>>>({});
+  // 🔹 Stato per feedback click
+  const [clickedButton, setClickedButton] = useState<string | null>(null);
 
   // 🔹 Login fittizio
   const [loginId, setLoginId] = useState("");
@@ -75,6 +77,13 @@ export default function App() {
     } else {
       alert("Credenziali errate");
     }
+  };
+
+  // 🔹 Helper per feedback click
+  const handleClickFeedback = (id: string, action: () => void) => {
+    setClickedButton(id);
+    action();
+    setTimeout(() => setClickedButton(null), 1000);
   };
 
   // 🔹 Carica stock da Supabase
@@ -125,7 +134,7 @@ export default function App() {
   // 🔹 Svuota carrello
   const svuotaCarrello = () => {
     setCarrello([]);
-    setOrdiniInput({}); // 🔹 reset input ordini
+    setOrdiniInput({});
   };
 
   // 🔹 Totali
@@ -378,25 +387,40 @@ export default function App() {
               </div>
               <div className="mt-2 flex gap-2">
                 <button
-                  onClick={() => addToCart(rows, ordiniInput[gruppo.sku] || {})}
-                  className="bg-green-600 text-white px-4 py-1 rounded"
+                  onClick={() =>
+                    handleClickFeedback(
+                      "aggiungi_" + gruppo.sku,
+                      () => addToCart(rows, ordiniInput[gruppo.sku] || {})
+                    )
+                  }
+                  className={`px-4 py-1 rounded text-white ${
+                    clickedButton === "aggiungi_" + gruppo.sku
+                      ? "bg-green-800"
+                      : "bg-green-600"
+                  }`}
                 >
                   Aggiungi
                 </button>
                 <button
-                  onClick={() => {
-                    setCarrello((prev) =>
-                      prev.filter(
-                        (p) => !rows.find((r) => r.sku === p.sku)
-                      )
-                    );
-                    setOrdiniInput((prev) => {
-                      const copia = { ...prev };
-                      delete copia[gruppo.sku];
-                      return copia;
-                    });
-                  }}
-                  className="bg-gray-600 text-white px-4 py-1 rounded"
+                  onClick={() =>
+                    handleClickFeedback("svuota_" + gruppo.sku, () => {
+                      setCarrello((prev) =>
+                        prev.filter(
+                          (p) => !rows.find((r) => r.sku === p.sku)
+                        )
+                      );
+                      setOrdiniInput((prev) => {
+                        const copia = { ...prev };
+                        delete copia[gruppo.sku];
+                        return copia;
+                      });
+                    })
+                  }
+                  className={`px-4 py-1 rounded text-white ${
+                    clickedButton === "svuota_" + gruppo.sku
+                      ? "bg-gray-800"
+                      : "bg-gray-600"
+                  }`}
                 >
                   Svuota
                 </button>
@@ -438,19 +462,44 @@ export default function App() {
           <p>Totale scontato: €{totaleScontato.toFixed(2)}</p>
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
-          <button onClick={inviaOrdine} className="bg-blue-600 text-white px-4 py-2 rounded">
+          <button
+            onClick={() => handleClickFeedback("invia", inviaOrdine)}
+            className={`px-4 py-2 rounded text-white ${
+              clickedButton === "invia" ? "bg-blue-800" : "bg-blue-600"
+            }`}
+          >
             Invia Ordine
           </button>
-          <button onClick={esportaCSV} className="bg-gray-600 text-white px-4 py-2 rounded">
+          <button
+            onClick={() => handleClickFeedback("csv", esportaCSV)}
+            className={`px-4 py-2 rounded text-white ${
+              clickedButton === "csv" ? "bg-gray-800" : "bg-gray-600"
+            }`}
+          >
             Esporta CSV
           </button>
-          <button onClick={esportaExcel} className="bg-gray-600 text-white px-4 py-2 rounded">
+          <button
+            onClick={() => handleClickFeedback("excel", esportaExcel)}
+            className={`px-4 py-2 rounded text-white ${
+              clickedButton === "excel" ? "bg-gray-800" : "bg-gray-600"
+            }`}
+          >
             Esporta Excel
           </button>
-          <button onClick={esportaPDF} className="bg-red-600 text-white px-4 py-2 rounded">
+          <button
+            onClick={() => handleClickFeedback("pdf", esportaPDF)}
+            className={`px-4 py-2 rounded text-white ${
+              clickedButton === "pdf" ? "bg-red-800" : "bg-red-600"
+            }`}
+          >
             Esporta PDF
           </button>
-          <button onClick={svuotaCarrello} className="bg-red-600 text-white px-4 py-2 rounded">
+          <button
+            onClick={() => handleClickFeedback("svuotaOrdine", svuotaCarrello)}
+            className={`px-4 py-2 rounded text-white ${
+              clickedButton === "svuotaOrdine" ? "bg-red-800" : "bg-red-600"
+            }`}
+          >
             Svuota Ordine
           </button>
         </div>
