@@ -4,7 +4,6 @@ import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import "jspdf-autotable";
 
-// 🔹 Configura Supabase (legge le env da Vercel)
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL!,
   import.meta.env.VITE_SUPABASE_ANON_KEY!
@@ -51,6 +50,24 @@ type StockRow = {
 
 type CarrelloRow = StockRow & { ordina: number };
 
+type Order = {
+  id: string;
+  customer: string;
+  stato: string;
+  created_at: string;
+};
+
+type OrderLine = {
+  order_id: string;
+  sku: string;
+  articolo: string;
+  taglia: string;
+  colore: string;
+  richiesti: number;
+  confermati: number | null;
+  prezzo: number;
+};
+
 export default function App() {
   const [stock, setStock] = useState<StockRow[]>([]);
   const [carrello, setCarrello] = useState<CarrelloRow[]>([]);
@@ -58,72 +75,111 @@ export default function App() {
   const [sconto, setSconto] = useState(0);
   const [filtro, setFiltro] = useState("TUTTI");
   const [ricerca, setRicerca] = useState("");
-
-  // 🔹 Stato input ordini
   const [ordiniInput, setOrdiniInput] = useState<Record<string, Record<string, number>>>({});
-  // 🔹 Stato per feedback click
-  const [clickedButton, setClickedButton] = useState<string | null>(null);
 
-  // 🔹 Login fittizio
   const [loginId, setLoginId] = useState("");
   const [loginPw, setLoginPw] = useState("");
   const [logged, setLogged] = useState(false);
+  const [ruolo, setRuolo] = useState<"bo" | "na" | null>(null);
 
+  // Napoli
+  const [showNotifiche, setShowNotifiche] = useState(false);
+  const [ordini, setOrdini] = useState<Order[]>([]);
+  const [ordineSelezionato, setOrdineSelezionato] = useState<Order | null>(null);
+  const [lineeOrdine, setLineeOrdine] = useState<OrderLine[]>([]);
+
+  // Bologna: ordini evasi
+  const [ordiniEvasi, setOrdiniEvasi] = useState<Order[]>([]);
+
+  // 🔹 Login
   const handleLogin = () => {
     if (loginId === "Mars3loBo" && loginPw === "Francesco01") {
+      setRuolo("bo");
       setLogged(true);
     } else if (loginId === "Mars3loNa" && loginPw === "Gbesse01") {
+      setRuolo("na");
       setLogged(true);
     } else {
       alert("Credenziali errate");
     }
   };
 
-  // 🔹 Helper per feedback click
-  const handleClickFeedback = (id: string, action: () => void) => {
-    setClickedButton(id);
-    action();
-    setTimeout(() => setClickedButton(null), 1000);
-  };
-
-  // 🔹 Carica stock da Supabase
+  // 🔹 Carica stock
   useEffect(() => {
     const fetchStock = async () => {
       let { data, error } = await supabase.from("stock").select("*");
-      if (error) console.error(error);
-      else
+      if (!error && data) {
         setStock(
           (data as StockRow[]).map((r) => ({
             ...r,
             categoria: getCategoria(r.sku),
           }))
         );
+      }
     };
     fetchStock();
   }, []);
 
-  // 🔹 Filtraggio stock
-  const filteredStock = stock.filter(
-    (s) =>
-      (filtro === "TUTTI" || s.categoria === filtro) &&
-      (s.articolo.toLowerCase().includes(ricerca.toLowerCase()) ||
-        s.sku.toLowerCase().includes(ricerca.toLowerCase()))
-  );
+  // 🔹 Carica ordini
+  useEffect(() => {
+    const fetchOrders = async () => {
+      let { data } = await supabase.from("orders").select("*").order("created_at", { ascending: false });
+      if (data) {
+        setOrdini(data as Order[]);
+        setOrdiniEvasi((data as Order[]).filter((o) => o.stato !== "In attesa"));
+      }
+    };
+    fetchOrders();
+  }, [showNotifiche]);
 
-  // 🔹 Raggruppamento articoli
-  const grouped = filteredStock.reduce((acc: any, row) => {
-    const key = row.articolo + "_" + row.colore;
-    if (!acc[key]) acc[key] = { ...row, taglie: [] as StockRow[] };
-    acc[key].taglie.push(row);
-    return acc;
-  }, {});
+  // 🔹 Carica linee ordine selezionato
+  const apriOrdine = async (ordine: Order) => {
+    setOrdineSelezionato(ordine);
+    let { data } = await supabase.from("order_lines").select("*").eq("order_id", ordine.id);
+    if (data) setLineeOrdine(data as OrderLine[]);
+  };
 
-  // 🔹 Aggiungi al carrello
+  // 🔹 Conferma ordine Napoli
+  const confermaOrdine = async () => {
+    if (!ordineSelezionato) return;
+
+    // update order_lines
+    for (let r of lineeOrdine) {
+      await supabase.from("order_lines").update({ confermati: r.confermati }).eq("order_id", r.order_id).eq("sku", r.sku).eq("taglia", r.taglia);
+      // scala stock
+      await supabase.from("stock").update({ qty: (stock.find(s => s.sku === r.sku && s.taglia === r.taglia)?.qty || 0) - (r.confermati || 0) }).eq("sku", r.sku).eq("taglia", r.taglia);
+    }
+
+    // stato ordine
+    let completo = lineeOrdine.every(l => l.richiesti === l.confermati);
+    let annullato = lineeOrdine.every(l => (l.confermati || 0) === 0);
+    let stato = completo ? "Evaso" : annullato ? "Annullato" : "Parziale";
+
+    await supabase.from("orders").update({ stato }).eq("id", ordineSelezionato.id);
+
+    alert("Ordine aggiornato!");
+    setOrdineSelezionato(null);
+    setLineeOrdine([]);
+  };
+
+  // 🔹 Annulla ordine Napoli
+  const annullaOrdine = async () => {
+    if (!ordineSelezionato) return;
+
+    for (let r of lineeOrdine) {
+      await supabase.from("order_lines").update({ confermati: 0 }).eq("order_id", r.order_id).eq("sku", r.sku).eq("taglia", r.taglia);
+    }
+    await supabase.from("orders").update({ stato: "Annullato" }).eq("id", ordineSelezionato.id);
+
+    alert("Ordine annullato!");
+    setOrdineSelezionato(null);
+    setLineeOrdine([]);
+  };
+
+  // 🔹 Aggiungi al carrello (Bo)
   const addToCart = (rows: StockRow[], ordini: Record<string, number>) => {
     const nuovi = rows
-      .map((r) =>
-        ordini[r.taglia] ? { ...r, ordina: ordini[r.taglia] } : null
-      )
+      .map((r) => (ordini[r.taglia] ? { ...r, ordina: ordini[r.taglia] } : null))
       .filter(Boolean) as CarrelloRow[];
     setCarrello((prev) => {
       const senza = prev.filter((p) => !nuovi.find((n) => n.sku === p.sku));
@@ -131,94 +187,23 @@ export default function App() {
     });
   };
 
-  // 🔹 Svuota carrello
   const svuotaCarrello = () => {
     setCarrello([]);
     setOrdiniInput({});
   };
 
-  // 🔹 Totali
   const totale = carrello.reduce((sum, r) => sum + r.prezzo * r.ordina, 0);
   const totaleScontato = totale * (1 - sconto / 100);
 
-  // 🔹 Esporta CSV
-  const esportaCSV = () => {
-    const header = ["Articolo", "Categoria", "Taglia", "Colore", "Q.tà", "Prezzo", "Totale Riga"];
-    const rows = carrello.map((r) => [
-      r.articolo,
-      r.categoria,
-      r.taglia,
-      r.colore,
-      r.ordina,
-      r.prezzo.toFixed(2),
-      (r.ordina * r.prezzo).toFixed(2),
-    ]);
-    const csv = [header, ...rows].map((x) => x.join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "ordine.csv";
-    a.click();
-  };
-
-  // 🔹 Esporta Excel
-  const esportaExcel = () => {
-    const ws = XLSX.utils.json_to_sheet(
-      carrello.map((r) => ({
-        Articolo: r.articolo,
-        Categoria: r.categoria,
-        Taglia: r.taglia,
-        Colore: r.colore,
-        Quantità: r.ordina,
-        Prezzo: r.prezzo.toFixed(2),
-        TotaleRiga: (r.ordina * r.prezzo).toFixed(2),
-      }))
-    );
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Ordine");
-    XLSX.writeFile(wb, "ordine.xlsx");
-  };
-
-  // 🔹 Esporta PDF
-  const esportaPDF = () => {
-    const doc = new jsPDF();
-    doc.text(`Ordine cliente: ${cliente}`, 10, 10);
-    (doc as any).autoTable({
-      head: [["Articolo", "Categoria", "Taglia", "Colore", "Q.tà", "Prezzo", "Totale"]],
-      body: carrello.map((r) => [
-        r.articolo,
-        r.categoria,
-        r.taglia,
-        r.colore,
-        r.ordina,
-        `€${r.prezzo.toFixed(2)}`,
-        `€${(r.ordina * r.prezzo).toFixed(2)}`,
-      ]),
-    });
-    doc.text(
-      `Totale: €${totale.toFixed(2)}  Totale scontato: €${totaleScontato.toFixed(2)}`,
-      10,
-      (doc as any).lastAutoTable.finalY + 10
-    );
-    doc.save(`ordine_${cliente}.pdf`);
-  };
-
-  // 🔹 Invia ordine su Supabase
+  // 🔹 Invia ordine Bo
   const inviaOrdine = async () => {
     if (!cliente) {
       alert("Inserisci il nome cliente");
       return;
     }
     const orderId = Date.now().toString();
-    const { error: ordErr } = await supabase.from("orders").insert([
-      { id: orderId, customer: cliente, stato: "In attesa" },
-    ]);
-    if (ordErr) {
-      console.error(ordErr);
-      return;
-    }
-    const { error: linesErr } = await supabase.from("order_lines").insert(
+    await supabase.from("orders").insert([{ id: orderId, customer: cliente, stato: "In attesa" }]);
+    await supabase.from("order_lines").insert(
       carrello.map((r) => ({
         order_id: orderId,
         sku: r.sku,
@@ -226,13 +211,10 @@ export default function App() {
         taglia: r.taglia,
         colore: r.colore,
         richiesti: r.ordina,
+        confermati: null,
         prezzo: r.prezzo,
       }))
     );
-    if (linesErr) {
-      console.error(linesErr);
-      return;
-    }
     alert("Ordine inviato!");
     svuotaCarrello();
   };
@@ -244,268 +226,239 @@ export default function App() {
         <div className="bg-gray-900 p-8 rounded-xl w-80 text-center">
           <img src="/mars3lo.png" alt="Mars3lo" className="mx-auto mb-4 w-32" />
           <h1 className="text-white text-xl mb-4">Mars3lo B2B</h1>
-          <input
-            className="w-full mb-2 p-2 rounded"
-            placeholder="ID"
-            value={loginId}
-            onChange={(e) => setLoginId(e.target.value)}
-          />
-          <input
-            type="password"
-            className="w-full mb-4 p-2 rounded"
-            placeholder="Password"
-            value={loginPw}
-            onChange={(e) => setLoginPw(e.target.value)}
-          />
-          <button
-            onClick={handleLogin}
-            className="bg-red-600 text-white px-4 py-2 rounded w-full"
-          >
-            Accedi
-          </button>
+          <input className="w-full mb-2 p-2 rounded" placeholder="ID" value={loginId} onChange={(e) => setLoginId(e.target.value)} />
+          <input type="password" className="w-full mb-4 p-2 rounded" placeholder="Password" value={loginPw} onChange={(e) => setLoginPw(e.target.value)} />
+          <button onClick={handleLogin} className="bg-red-600 text-white px-4 py-2 rounded w-full">Accedi</button>
         </div>
       </div>
     );
   }
 
-  // 🔹 UI principale
-  return (
-    <div className="min-h-screen bg-gray-100">
-      {/* Barra nera */}
-      <div className="bg-black p-4 flex justify-center items-center">
-        <img src="/mars3lo.png" alt="Mars3lo" className="h-10 mr-4" />
-        <h1 className="text-white text-xl font-bold">Mars3lo B2B</h1>
-      </div>
-
-      {/* Cliente + Sconto */}
-      <div className="p-4 flex gap-4 items-center">
-        <input
-          placeholder="Cliente"
-          className="border p-2 rounded flex-1"
-          value={cliente}
-          onChange={(e) => setCliente(e.target.value)}
-        />
-        <label className="flex items-center gap-2">
-          Sconto:
-          <input
-            type="number"
-            className="border p-2 rounded w-20"
-            value={sconto}
-            onChange={(e) => setSconto(parseInt(e.target.value) || 0)}
-          />
-          %
-        </label>
-      </div>
-
-      {/* Filtro categorie + ricerca */}
-      <div className="px-4 mb-4 flex flex-wrap gap-4 items-center">
-        <div>
-          <label className="mr-2">Categoria:</label>
-          <select
-            value={filtro}
-            onChange={(e) => setFiltro(e.target.value)}
-            className="border p-2 rounded"
-          >
-            <option value="TUTTI">Tutti</option>
-            <option value="GIACCHE">Giacche</option>
-            <option value="PANTALONI">Pantaloni</option>
-            <option value="GIUBBOTTI">Giubbotti</option>
-            <option value="MAGLIE">Maglie</option>
-            <option value="CAPPOTTI">Cappotti</option>
-            <option value="CAMICIE">Camicie</option>
-          </select>
-        </div>
-        <input
-          type="text"
-          placeholder="Cerca per codice o articolo..."
-          className="border p-2 rounded flex-1"
-          value={ricerca}
-          onChange={(e) => setRicerca(e.target.value)}
-        />
-      </div>
-
-      {/* Griglia articoli */}
-      <div className="p-4 space-y-6">
-        {Object.values(grouped).map((gruppo: any) => {
-          const rows: StockRow[] = sortTaglie(
-            gruppo.taglie.map((t: StockRow) => t.taglia)
-          ).map((taglia) =>
-            gruppo.taglie.find((t: StockRow) => t.taglia === taglia)!
-          );
-
-          return (
-            <div key={gruppo.sku} className="bg-white shadow rounded-lg p-4">
-              <h2 className="font-bold mb-2">
-                {gruppo.articolo} {gruppo.categoria} – {gruppo.colore} – €
-                {Number(gruppo.prezzo).toFixed(2)}
-              </h2>
-              <div className="overflow-x-auto">
-                <table className="min-w-max border text-center">
-                  <thead>
-                    <tr>
-                      <th className="px-2">Taglia</th>
-                      {rows.map((r) => (
-                        <th key={r.taglia} className="px-2">
-                          {r.taglia}
-                        </th>
-                      ))}
+  // 🔹 UI Napoli
+  if (ruolo === "na") {
+    if (showNotifiche) {
+      return (
+        <div className="min-h-screen bg-gray-100">
+          <div className="bg-black p-4 flex justify-between items-center">
+            <h1 className="text-white text-xl font-bold">Mars3lo Napoli – Ordini</h1>
+            <button onClick={() => { setShowNotifiche(false); setOrdineSelezionato(null); }} className="bg-gray-600 text-white px-4 py-1 rounded">Magazzino</button>
+          </div>
+          {!ordineSelezionato ? (
+            <div className="p-4">
+              <h2 className="font-bold mb-2">Ordini in attesa</h2>
+              <table className="w-full border">
+                <thead><tr><th>ID</th><th>Cliente</th><th>Stato</th><th>Data</th></tr></thead>
+                <tbody>
+                  {ordini.filter(o => o.stato === "In attesa").map((o) => (
+                    <tr key={o.id} onClick={() => apriOrdine(o)} className="cursor-pointer hover:bg-gray-100">
+                      <td>{o.id}</td><td>{o.customer}</td><td>{o.stato}</td><td>{new Date(o.created_at).toLocaleString()}</td>
                     </tr>
-                    <tr>
-                      <td className="px-2">Disp.</td>
-                      {rows.map((r) => (
-                        <td key={r.taglia}>{r.qty}</td>
-                      ))}
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="p-4">
+              <h2 className="font-bold mb-2">Ordine {ordineSelezionato.id} – {ordineSelezionato.customer}</h2>
+              <table className="w-full border text-center">
+                <thead><tr><th>Articolo</th><th>Taglia</th><th>Colore</th><th>Ordina</th><th>Evaso</th></tr></thead>
+                <tbody>
+                  {lineeOrdine.map((l, i) => (
+                    <tr key={i}>
+                      <td>{l.articolo}</td>
+                      <td>{l.taglia}</td>
+                      <td>{l.colore}</td>
+                      <td>{l.richiesti}</td>
+                      <td>
+                        <input type="number" min={0} max={l.richiesti} value={l.confermati ?? l.richiesti} onChange={(e) => {
+                          const v = parseInt(e.target.value) || 0;
+                          setLineeOrdine(prev => prev.map((x, j) => j === i ? { ...x, confermati: v } : x));
+                        }} className="w-16 p-1 border rounded text-center" />
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td className="px-2">Ordina</td>
-                      {rows.map((r) => (
-                        <td key={r.taglia}>
-                          <input
-  type="number"
-  min={0}
-  max={r.qty}
-  className="w-16 p-1 border rounded text-center"
-  value={ordiniInput[gruppo.sku]?.[r.taglia] ?? ""}
-  onFocus={(e) => e.target.select()} // 🔹 seleziona tutto il contenuto quando entri
-  onChange={(e) => {
-    const val = parseInt(e.target.value) || 0;
-    setOrdiniInput((prev) => ({
-      ...prev,
-      [gruppo.sku]: {
-        ...prev[gruppo.sku],
-        [r.taglia]: val,
-      },
-    }));
-  }}
-/>
-
-                        </td>
-                      ))}
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              <div className="mt-2 flex gap-2">
-                <button
-                  onClick={() =>
-                    handleClickFeedback(
-                      "aggiungi_" + gruppo.sku,
-                      () => addToCart(rows, ordiniInput[gruppo.sku] || {})
-                    )
-                  }
-                  className={`px-4 py-1 rounded text-white ${
-                    clickedButton === "aggiungi_" + gruppo.sku
-                      ? "bg-green-800"
-                      : "bg-green-600"
-                  }`}
-                >
-                  Aggiungi
-                </button>
-                <button
-                  onClick={() =>
-                    handleClickFeedback("svuota_" + gruppo.sku, () => {
-                      setCarrello((prev) =>
-                        prev.filter(
-                          (p) => !rows.find((r) => r.sku === p.sku)
-                        )
-                      );
-                      setOrdiniInput((prev) => {
-                        const copia = { ...prev };
-                        delete copia[gruppo.sku];
-                        return copia;
-                      });
-                    })
-                  }
-                  className={`px-4 py-1 rounded text-white ${
-                    clickedButton === "svuota_" + gruppo.sku
-                      ? "bg-gray-800"
-                      : "bg-gray-600"
-                  }`}
-                >
-                  Svuota
-                </button>
+                  ))}
+                </tbody>
+              </table>
+              <div className="mt-4 flex gap-2">
+                <button onClick={confermaOrdine} className="bg-green-600 text-white px-4 py-2 rounded">Conferma</button>
+                <button onClick={annullaOrdine} className="bg-red-600 text-white px-4 py-2 rounded">Annulla</button>
               </div>
             </div>
-          );
-        })}
+          )}
+        </div>
+      );
+    }
+    return (
+      <div className="min-h-screen bg-gray-100">
+        <div className="bg-black p-4 flex justify-between items-center">
+          <h1 className="text-white text-xl font-bold">Mars3lo Napoli – Magazzino</h1>
+          <button onClick={() => setShowNotifiche(true)} className="bg-blue-600 text-white px-4 py-1 rounded">Notifiche Ordini</button>
+        </div>
+        <div className="p-4">
+          <h2 className="font-bold mb-2">Stock</h2>
+          <table className="w-full border text-center">
+            <thead><tr><th>SKU</th><th>Articolo</th><th>Categoria</th><th>Taglia</th><th>Colore</th><th>Q.tà</th><th>Prezzo</th></tr></thead>
+            <tbody>
+              {stock.map((s, i) => (
+                <tr key={i}>
+                  <td>{s.sku}</td><td>{s.articolo}</td><td>{s.categoria}</td><td>{s.taglia}</td><td>{s.colore}</td><td>{s.qty}</td><td>€{s.prezzo.toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
+    );
+  }
 
-      {/* Carrello */}
-      <div className="p-4 bg-white shadow mt-6">
-        <h2 className="font-bold mb-2">Ordine</h2>
-        <table className="w-full border">
-          <thead>
-            <tr>
-              <th>Articolo</th>
-              <th>Taglia</th>
-              <th>Colore</th>
-              <th>Q.tà</th>
-              <th>Prezzo</th>
-              <th>Totale</th>
-            </tr>
-          </thead>
-          <tbody>
-            {carrello.map((r) => (
-              <tr key={r.sku + r.taglia}>
-                <td>{r.articolo}</td>
-                <td>{r.taglia}</td>
-                <td>{r.colore}</td>
-                <td>{r.ordina}</td>
-                <td>€{r.prezzo.toFixed(2)}</td>
-                <td>€{(r.ordina * r.prezzo).toFixed(2)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <div className="mt-4">
-          <p>Totale: €{totale.toFixed(2)}</p>
-          <p>Totale scontato: €{totaleScontato.toFixed(2)}</p>
+  // 🔹 UI Bologna
+  if (ruolo === "bo") {
+    // 🔹 Filtraggio stock
+    const filteredStock = stock.filter(
+      (s) =>
+        (filtro === "TUTTI" || s.categoria === filtro) &&
+        (s.articolo.toLowerCase().includes(ricerca.toLowerCase()) ||
+          s.sku.toLowerCase().includes(ricerca.toLowerCase()))
+    );
+
+    // 🔹 Raggruppamento articoli
+    const grouped = filteredStock.reduce((acc: any, row) => {
+      const key = row.articolo + "_" + row.colore;
+      if (!acc[key]) acc[key] = { ...row, taglie: [] as StockRow[] };
+      acc[key].taglie.push(row);
+      return acc;
+    }, {});
+
+    return (
+      <div className="min-h-screen bg-gray-100">
+        <div className="bg-black p-4 flex justify-center items-center">
+          <img src="/mars3lo.png" alt="Mars3lo" className="h-10 mr-4" />
+          <h1 className="text-white text-xl font-bold">Mars3lo Bologna</h1>
         </div>
-        <div className="mt-4 flex flex-wrap gap-2">
-          <button
-            onClick={() => handleClickFeedback("invia", inviaOrdine)}
-            className={`px-4 py-2 rounded text-white ${
-              clickedButton === "invia" ? "bg-blue-800" : "bg-blue-600"
-            }`}
-          >
-            Invia Ordine
-          </button>
-          <button
-            onClick={() => handleClickFeedback("csv", esportaCSV)}
-            className={`px-4 py-2 rounded text-white ${
-              clickedButton === "csv" ? "bg-gray-800" : "bg-gray-600"
-            }`}
-          >
-            Esporta CSV
-          </button>
-          <button
-            onClick={() => handleClickFeedback("excel", esportaExcel)}
-            className={`px-4 py-2 rounded text-white ${
-              clickedButton === "excel" ? "bg-gray-800" : "bg-gray-600"
-            }`}
-          >
-            Esporta Excel
-          </button>
-          <button
-            onClick={() => handleClickFeedback("pdf", esportaPDF)}
-            className={`px-4 py-2 rounded text-white ${
-              clickedButton === "pdf" ? "bg-red-800" : "bg-red-600"
-            }`}
-          >
-            Esporta PDF
-          </button>
-          <button
-            onClick={() => handleClickFeedback("svuotaOrdine", svuotaCarrello)}
-            className={`px-4 py-2 rounded text-white ${
-              clickedButton === "svuotaOrdine" ? "bg-red-800" : "bg-red-600"
-            }`}
-          >
-            Svuota Ordine
-          </button>
+
+        {/* Cliente + Sconto */}
+        <div className="p-4 flex gap-4 items-center">
+          <input placeholder="Cliente" className="border p-2 rounded flex-1" value={cliente} onChange={(e) => setCliente(e.target.value)} />
+          <label className="flex items-center gap-2">Sconto:
+            <input type="number" className="border p-2 rounded w-20" value={sconto} onChange={(e) => setSconto(parseInt(e.target.value) || 0)} /> %
+          </label>
+        </div>
+
+        {/* Filtro categorie + ricerca */}
+        <div className="px-4 mb-4 flex flex-wrap gap-4 items-center">
+          <div>
+            <label className="mr-2">Categoria:</label>
+            <select value={filtro} onChange={(e) => setFiltro(e.target.value)} className="border p-2 rounded">
+              <option value="TUTTI">Tutti</option>
+              <option value="GIACCHE">Giacche</option>
+              <option value="PANTALONI">Pantaloni</option>
+              <option value="GIUBBOTTI">Giubbotti</option>
+              <option value="MAGLIE">Maglie</option>
+              <option value="CAPPOTTI">Cappotti</option>
+              <option value="CAMICIE">Camicie</option>
+            </select>
+          </div>
+          <input type="text" placeholder="Cerca per codice o articolo..." className="border p-2 rounded flex-1" value={ricerca} onChange={(e) => setRicerca(e.target.value)} />
+        </div>
+
+        {/* Griglia articoli */}
+        <div className="p-4 space-y-6">
+          {Object.values(grouped).map((gruppo: any) => {
+            const rows: StockRow[] = sortTaglie(
+              gruppo.taglie.map((t: StockRow) => t.taglia)
+            ).map((taglia) =>
+              gruppo.taglie.find((t: StockRow) => t.taglia === taglia)!
+            );
+
+            return (
+              <div key={gruppo.sku} className="bg-white shadow rounded-lg p-4">
+                <h2 className="font-bold mb-2">
+                  {gruppo.articolo} {gruppo.categoria} – {gruppo.colore} – €{Number(gruppo.prezzo).toFixed(2)}
+                </h2>
+                <div className="overflow-x-auto">
+                  <table className="min-w-max border text-center">
+                    <thead>
+                      <tr>
+                        <th className="px-2">Taglia</th>
+                        {rows.map((r) => (<th key={r.taglia} className="px-2">{r.taglia}</th>))}
+                      </tr>
+                      <tr>
+                        <td className="px-2">Disp.</td>
+                        {rows.map((r) => (<td key={r.taglia}>{r.qty}</td>))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td className="px-2">Ordina</td>
+                        {rows.map((r) => (
+                          <td key={r.taglia}>
+                            <input type="number" min={0} max={r.qty} className="w-16 p-1 border rounded text-center"
+                              value={ordiniInput[gruppo.sku]?.[r.taglia] ?? ""}
+                              onFocus={(e) => e.target.select()}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value) || 0;
+                                setOrdiniInput((prev) => ({
+                                  ...prev,
+                                  [gruppo.sku]: { ...prev[gruppo.sku], [r.taglia]: val },
+                                }));
+                              }}
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div className="mt-2 flex gap-2">
+                  <button onClick={() => addToCart(rows, ordiniInput[gruppo.sku] || {})} className="bg-green-600 text-white px-4 py-1 rounded">Aggiungi</button>
+                  <button onClick={() => {
+                    setCarrello((prev) => prev.filter((p) => !rows.find((r) => r.sku === p.sku)));
+                    setOrdiniInput((prev) => { const copia = { ...prev }; delete copia[gruppo.sku]; return copia; });
+                  }} className="bg-gray-600 text-white px-4 py-1 rounded">Svuota</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Carrello */}
+        <div className="p-4 bg-white shadow mt-6">
+          <h2 className="font-bold mb-2">Ordine</h2>
+          <table className="w-full border">
+            <thead><tr><th>Articolo</th><th>Taglia</th><th>Colore</th><th>Q.tà</th><th>Prezzo</th><th>Totale</th></tr></thead>
+            <tbody>
+              {carrello.map((r) => (
+                <tr key={r.sku + r.taglia}>
+                  <td>{r.articolo}</td><td>{r.taglia}</td><td>{r.colore}</td><td>{r.ordina}</td>
+                  <td>€{r.prezzo.toFixed(2)}</td><td>€{(r.ordina * r.prezzo).toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="mt-4"><p>Totale: €{totale.toFixed(2)}</p><p>Totale scontato: €{totaleScontato.toFixed(2)}</p></div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button onClick={inviaOrdine} className="bg-blue-600 text-white px-4 py-2 rounded">Invia Ordine</button>
+            <button onClick={svuotaCarrello} className="bg-red-600 text-white px-4 py-2 rounded">Svuota Ordine</button>
+          </div>
+        </div>
+
+        {/* Ordini evasi */}
+        <div className="p-4 bg-white shadow mt-6">
+          <h2 className="font-bold mb-2">Ordini Evasi</h2>
+          <table className="w-full border">
+            <thead><tr><th>ID</th><th>Cliente</th><th>Stato</th><th>Data</th></tr></thead>
+            <tbody>
+              {ordiniEvasi.map((o) => (
+                <tr key={o.id}>
+                  <td>{o.id}</td><td>{o.customer}</td><td>{o.stato}</td><td>{new Date(o.created_at).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
-    </div>
-  );
+    );
+  }
+
+  return null;
 }
