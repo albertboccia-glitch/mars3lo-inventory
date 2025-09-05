@@ -43,7 +43,6 @@ type StockRow = {
   qty: number;
   prezzo: number;
 };
-
 type CarrelloRow = StockRow & { ordina: number };
 
 type Order = {
@@ -52,7 +51,6 @@ type Order = {
   stato: string;
   created_at: string;
 };
-
 type OrderLine = {
   order_id: string;
   sku: string;
@@ -87,26 +85,23 @@ export default function App() {
   const [ordineBoSelezionato, setOrdineBoSelezionato] = useState<Order | null>(null);
   const [lineeBoOrdine, setLineeBoOrdine] = useState<OrderLine[]>([]);
 
+  const [ordiniNascostiNa, setOrdiniNascostiNa] = useState<string[]>([]);
+  const [ordiniNascostiBo, setOrdiniNascostiBo] = useState<string[]>([]);
+
   // 🔹 Login
   const handleLogin = () => {
     if (loginId === "Mars3loBo" && loginPw === "Francesco01") {
-      setRuolo("bo");
-      setLogged(true);
+      setRuolo("bo"); setLogged(true);
     } else if (loginId === "Mars3loNa" && loginPw === "Gbesse01") {
-      setRuolo("na");
-      setLogged(true);
-    } else {
-      alert("Credenziali errate");
-    }
+      setRuolo("na"); setLogged(true);
+    } else alert("Credenziali errate");
   };
 
   // 🔹 Carica stock
   useEffect(() => {
     const fetchStock = async () => {
       let { data } = await supabase.from("stock").select("*");
-      if (data) {
-        setStock((data as StockRow[]).map((r) => ({ ...r, categoria: getCategoria(r.sku) })));
-      }
+      if (data) setStock((data as StockRow[]).map((r) => ({ ...r, categoria: getCategoria(r.sku) })));
     };
     fetchStock();
   }, []);
@@ -123,14 +118,13 @@ export default function App() {
     fetchOrders();
   }, [showNotifiche]);
 
-  // 🔹 Apri ordine (Napoli)
+  // 🔹 Apri ordine Napoli
   const apriOrdine = async (ordine: Order) => {
     setOrdineSelezionato(ordine);
     let { data } = await supabase.from("order_lines").select("*").eq("order_id", ordine.id);
     if (data) setLineeOrdine(data as OrderLine[]);
   };
-
-  // 🔹 Apri ordine (Bologna)
+  // 🔹 Apri ordine Bologna
   const apriBoOrdine = async (ordine: Order) => {
     setOrdineBoSelezionato(ordine);
     let { data } = await supabase.from("order_lines").select("*").eq("order_id", ordine.id);
@@ -141,7 +135,8 @@ export default function App() {
   const confermaOrdine = async () => {
     if (!ordineSelezionato) return;
     for (let r of lineeOrdine) {
-      await supabase.from("order_lines").update({ confermati: r.confermati }).eq("order_id", r.order_id).eq("sku", r.sku).eq("taglia", r.taglia);
+      await supabase.from("order_lines").update({ confermati: r.confermati })
+        .eq("order_id", r.order_id).eq("sku", r.sku).eq("taglia", r.taglia);
       await supabase.from("stock").update({
         qty: (stock.find((s) => s.sku === r.sku && s.taglia === r.taglia)?.qty || 0) - (r.confermati || 0),
       }).eq("sku", r.sku).eq("taglia", r.taglia);
@@ -151,60 +146,71 @@ export default function App() {
     let stato = completo ? "Evaso" : annullato ? "Annullato" : "Parziale";
     await supabase.from("orders").update({ stato }).eq("id", ordineSelezionato.id);
     alert("Ordine aggiornato!");
-    setOrdineSelezionato(null);
-    setLineeOrdine([]);
+    setOrdineSelezionato(null); setLineeOrdine([]);
   };
-
   // 🔹 Annulla ordine Napoli
   const annullaOrdine = async () => {
     if (!ordineSelezionato) return;
     for (let r of lineeOrdine) {
-      await supabase.from("order_lines").update({ confermati: 0 }).eq("order_id", r.order_id).eq("sku", r.sku).eq("taglia", r.taglia);
+      await supabase.from("order_lines").update({ confermati: 0 })
+        .eq("order_id", r.order_id).eq("sku", r.sku).eq("taglia", r.taglia);
     }
     await supabase.from("orders").update({ stato: "Annullato" }).eq("id", ordineSelezionato.id);
     alert("Ordine annullato!");
-    setOrdineSelezionato(null);
-    setLineeOrdine([]);
+    setOrdineSelezionato(null); setLineeOrdine([]);
   };
 
-  // 🔹 Aggiungi al carrello (Bologna)
+  // 🔹 Carrello
   const addToCart = (rows: StockRow[], ordini: Record<string, number>) => {
-    const nuovi = rows.map((r) => (ordini[r.taglia] ? { ...r, ordina: ordini[r.taglia] } : null)).filter(Boolean) as CarrelloRow[];
+    const nuovi = rows.map((r) => (ordini[r.taglia] ? { ...r, ordina: ordini[r.taglia] } : null))
+      .filter(Boolean) as CarrelloRow[];
     setCarrello((prev) => {
       const senza = prev.filter((p) => !nuovi.find((n) => n.sku === p.sku));
       return [...senza, ...nuovi];
     });
   };
-
-  const svuotaCarrello = () => {
-    setCarrello([]);
-    setOrdiniInput({});
-  };
-
+  const svuotaCarrello = () => { setCarrello([]); setOrdiniInput({}); };
   const totale = carrello.reduce((sum, r) => sum + r.prezzo * r.ordina, 0);
   const totaleScontato = totale * (1 - sconto / 100);
 
+  // 🔹 Invia ordine Bologna con progressivo
   const inviaOrdine = async () => {
-    if (!cliente) {
-      alert("Inserisci il nome cliente");
-      return;
-    }
-    const orderId = Date.now().toString();
+    if (!cliente) { alert("Inserisci cliente"); return; }
+    const year = new Date().getFullYear().toString().slice(-2);
+    const { count } = await supabase.from("orders")
+      .select("*", { count: "exact", head: true })
+      .gte("created_at", `${new Date().getFullYear()}-01-01`);
+    const progressivo = (count || 0) + 1;
+    const orderId = `${progressivo}/${year}`;
     await supabase.from("orders").insert([{ id: orderId, customer: cliente, stato: "In attesa" }]);
     await supabase.from("order_lines").insert(
       carrello.map((r) => ({
-        order_id: orderId,
-        sku: r.sku,
-        articolo: r.articolo,
-        taglia: r.taglia,
-        colore: r.colore,
-        richiesti: r.ordina,
-        confermati: null,
-        prezzo: r.prezzo,
+        order_id: orderId, sku: r.sku, articolo: r.articolo,
+        taglia: r.taglia, colore: r.colore, richiesti: r.ordina, confermati: null, prezzo: r.prezzo,
       }))
     );
     alert("Ordine inviato!");
     svuotaCarrello();
+  };
+
+  // 🔹 Export helpers
+  const esportaCSV = (rows: any[], filename: string) => {
+    const csv = rows.map((r) => r.join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+  };
+  const esportaExcel = (json: any[], filename: string) => {
+    const ws = XLSX.utils.json_to_sheet(json);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+    XLSX.writeFile(wb, filename);
+  };
+  const esportaPDF = (head: any[], body: any[], title: string, filename: string) => {
+    const doc = new jsPDF();
+    doc.text(title, 10, 10);
+    (doc as any).autoTable({ head: [head], body });
+    doc.save(filename);
   };
 
   // 🔹 UI Login
@@ -222,24 +228,27 @@ export default function App() {
     );
   }
 
-  // 🔹 Napoli UI
+  // 🔹 UI Napoli
   if (ruolo === "na") {
+    // lista / dettaglio ordini
     if (showNotifiche) {
       return (
         <div className="min-h-screen bg-gray-100">
           <div className="bg-black p-4 flex justify-between items-center">
-            <h1 className="text-white text-xl font-bold">Mars3lo Napoli – Ordini</h1>
-            <button onClick={() => { setShowNotifiche(false); setOrdineSelezionato(null); }} className="bg-gray-600 text-white px-4 py-1 rounded">Magazzino</button>
+            <h1 className="text-white text-xl font-bold">Napoli – Ordini</h1>
+            <button onClick={() => { setShowNotifiche(false); setOrdineSelezionato(null); }} className="bg-gray-600 text-white px-4 py-1 rounded">Torna indietro</button>
           </div>
           {!ordineSelezionato ? (
             <div className="p-4">
               <h2 className="font-bold mb-2">Ordini in attesa</h2>
               <table className="w-full border">
-                <thead><tr><th>ID</th><th>Cliente</th><th>Stato</th><th>Data</th></tr></thead>
+                <thead><tr><th>ID</th><th>Cliente</th><th>Stato</th><th>Data</th><th></th></tr></thead>
                 <tbody>
-                  {ordini.filter((o) => o.stato === "In attesa").map((o) => (
-                    <tr key={o.id} onClick={() => apriOrdine(o)} className="cursor-pointer hover:bg-gray-100">
-                      <td>{o.id}</td><td>{o.customer}</td><td>{o.stato}</td><td>{new Date(o.created_at).toLocaleString()}</td>
+                  {ordini.filter((o) => o.stato === "In attesa" && !ordiniNascostiNa.includes(o.id)).map((o) => (
+                    <tr key={o.id} className="hover:bg-gray-100">
+                      <td onClick={() => apriOrdine(o)} className="cursor-pointer">{o.id}</td>
+                      <td>{o.customer}</td><td>{o.stato}</td><td>{new Date(o.created_at).toLocaleString()}</td>
+                      <td><button onClick={() => setOrdiniNascostiNa([...ordiniNascostiNa, o.id])} className="text-red-600">❌</button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -247,13 +256,12 @@ export default function App() {
             </div>
           ) : (
             <div className="p-4">
+              <button onClick={() => setOrdineSelezionato(null)} className="bg-gray-600 text-white px-4 py-1 rounded mb-4">Torna indietro</button>
               <h2 className="font-bold mb-2">Ordine {ordineSelezionato.id} – {ordineSelezionato.customer}</h2>
-              {/* griglia articoli */}
               {Object.values(lineeOrdine.reduce((acc: any, r) => {
                 const key = r.articolo + "_" + r.colore;
                 if (!acc[key]) acc[key] = { ...r, taglie: [] as OrderLine[] };
-                acc[key].taglie.push(r);
-                return acc;
+                acc[key].taglie.push(r); return acc;
               }, {})).map((gruppo: any, idx: number) => {
                 const rows = sortTaglie(gruppo.taglie.map((t: OrderLine) => t.taglia)).map((taglia) => gruppo.taglie.find((t: OrderLine) => t.taglia === taglia)!);
                 return (
@@ -270,8 +278,7 @@ export default function App() {
                                 const v = parseInt(e.target.value) || 0;
                                 setLineeOrdine((prev) => prev.map((x) => (x.sku === r.sku && x.taglia === r.taglia ? { ...x, confermati: v } : x)));
                               }}
-                              className="w-16 p-1 border rounded text-center"
-                            />
+                              className="w-16 p-1 border rounded text-center" />
                           </td>
                         ))}</tr>
                       </thead>
@@ -289,18 +296,17 @@ export default function App() {
       );
     }
 
-    // Magazzino Napoli
+    // magazzino Napoli
     const groupedStock = stock.reduce((acc: any, row) => {
       const key = row.articolo + "_" + row.colore;
       if (!acc[key]) acc[key] = { ...row, taglie: [] as StockRow[] };
-      acc[key].taglie.push(row);
-      return acc;
+      acc[key].taglie.push(row); return acc;
     }, {});
 
     return (
       <div className="min-h-screen bg-gray-100">
         <div className="bg-black p-4 flex justify-between items-center">
-          <h1 className="text-white text-xl font-bold">Mars3lo Napoli – Magazzino</h1>
+          <h1 className="text-white text-xl font-bold">Napoli – Magazzino</h1>
           <button onClick={() => setShowNotifiche(true)} className="bg-blue-600 text-white px-4 py-1 rounded">Notifiche Ordini</button>
         </div>
         <div className="p-4 space-y-6">
@@ -320,170 +326,165 @@ export default function App() {
           })}
         </div>
         <div className="p-4 flex flex-wrap gap-2">
-          <button className="bg-gray-600 text-white px-4 py-2 rounded">Esporta CSV</button>
-          <button className="bg-gray-600 text-white px-4 py-2 rounded">Esporta Excel</button>
-          <button className="bg-red-600 text-white px-4 py-2 rounded">Esporta PDF</button>
+          <button onClick={() => esportaCSV(stock.map((s) => [s.sku, s.articolo, s.categoria, s.colore, s.taglia, s.qty, s.prezzo]), "magazzino.csv")} className="bg-gray-600 text-white px-4 py-2 rounded">Esporta CSV</button>
+          <button onClick={() => esportaExcel(stock, "magazzino.xlsx")} className="bg-gray-600 text-white px-4 py-2 rounded">Esporta Excel</button>
+          <button onClick={() => esportaPDF(["SKU","Articolo","Categoria","Colore","Taglia","Qty","Prezzo"], stock.map((s) => [s.sku,s.articolo,s.categoria,s.colore,s.taglia,s.qty,s.prezzo]), "Magazzino", "magazzino.pdf")} className="bg-red-600 text-white px-4 py-2 rounded">Esporta PDF</button>
         </div>
       </div>
     );
   }
 
-  // 🔹 Bologna UI
+  // 🔹 UI Bologna
   if (ruolo === "bo") {
-    const filteredStock = stock.filter((s) => (filtro === "TUTTI" || s.categoria === filtro) && (s.articolo.toLowerCase().includes(ricerca.toLowerCase()) || s.sku.toLowerCase().includes(ricerca.toLowerCase())));
+    const filteredStock = stock.filter((s) => (filtro === "TUTTI" || s.categoria === filtro) &&
+      (s.articolo.toLowerCase().includes(ricerca.toLowerCase()) || s.sku.toLowerCase().includes(ricerca.toLowerCase())));
     const grouped = filteredStock.reduce((acc: any, row) => {
       const key = row.articolo + "_" + row.colore;
-      if (!acc[key]) acc[key] = { ...row, taglie: [] as StockRow[]
-};
-acc[key].taglie.push(row);
-return acc;
-}, {});
-    return (
-  <div className="min-h-screen bg-gray-100">
-    <div className="bg-black p-4 flex justify-between items-center">
-      <div className="flex items-center">
-        <img src="/mars3lo.png" alt="Mars3lo" className="h-10 mr-4" />
-        <h1 className="text-white text-xl font-bold">Mars3lo Bologna</h1>
-      </div>
-      <button onClick={() => setShowNotifiche(true)} className="bg-blue-600 text-white px-4 py-1 rounded">Ordini Evasi</button>
-    </div>
+      if (!acc[key]) acc[key] = { ...row, taglie: [] as StockRow[] };
+      acc[key].taglie.push(row); return acc;
+    }, {});
 
-    {showNotifiche ? (
-      <div className="p-4">
-        {!ordineBoSelezionato ? (
-          <>
-            <h2 className="font-bold mb-2">Ordini Evasi</h2>
-            <table className="w-full border">
-              <thead><tr><th>ID</th><th>Cliente</th><th>Stato</th><th>Data</th></tr></thead>
-              <tbody>
-                {ordiniEvasi.map((o) => (
-                  <tr key={o.id} onClick={() => apriBoOrdine(o)} className="cursor-pointer hover:bg-gray-100">
-                    <td>{o.id}</td><td>{o.customer}</td><td>{o.stato}</td><td>{new Date(o.created_at).toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </>
-        ) : (
-          <div>
-            <h2 className="font-bold mb-2">Ordine {ordineBoSelezionato.id} – {ordineBoSelezionato.customer}</h2>
-            {Object.values(lineeBoOrdine.reduce((acc: any, r) => {
-              const key = r.articolo + "_" + r.colore;
-              if (!acc[key]) acc[key] = { ...r, taglie: [] as OrderLine[] };
-              acc[key].taglie.push(r);
-              return acc;
-            }, {})).map((gruppo: any, idx: number) => {
-              const rows = sortTaglie(gruppo.taglie.map((t: OrderLine) => t.taglia)).map((taglia) => gruppo.taglie.find((t: OrderLine) => t.taglia === taglia)!);
-              return (
-                <div key={idx} className="bg-white shadow rounded-lg p-4 mb-4">
-                  <h2 className="font-bold mb-2">{gruppo.sku} {gruppo.articolo} – {gruppo.colore} – €{Number(gruppo.prezzo).toFixed(2)}</h2>
-                  <table className="w-full border text-center">
-                    <thead>
-                      <tr><th>Taglia</th>{rows.map((r) => (<th key={r.taglia}>{r.taglia}</th>))}</tr>
-                      <tr><td>Ordina</td>{rows.map((r) => (<td key={r.taglia}>{r.richiesti}</td>))}</tr>
-                      <tr><td>Evaso</td>{rows.map((r) => (<td key={r.taglia}>{r.confermati ?? 0}</td>))}</tr>
-                    </thead>
-                  </table>
-                </div>
-              );
-            })}
+    return (
+      <div className="min-h-screen bg-gray-100">
+        <div className="bg-black p-4 flex justify-between items-center">
+          <div className="flex items-center">
+            <img src="/mars3lo.png" alt="Mars3lo" className="h-10 mr-4" />
+            <h1 className="text-white text-xl font-bold">Bologna</h1>
           </div>
+          <button onClick={() => setShowNotifiche(true)} className="bg-blue-600 text-white px-4 py-1 rounded">Ordini Evasi</button>
+        </div>
+
+        {showNotifiche ? (
+          <div className="p-4">
+            {!ordineBoSelezionato ? (
+              <>
+                <button onClick={() => setShowNotifiche(false)} className="bg-gray-600 text-white px-4 py-1 rounded mb-4">Torna indietro</button>
+                <h2 className="font-bold mb-2">Ordini Evasi</h2>
+                <table className="w-full border">
+                  <thead><tr><th>ID</th><th>Cliente</th><th>Stato</th><th>Data</th><th></th></tr></thead>
+                  <tbody>
+                    {ordiniEvasi.filter((o) => !ordiniNascostiBo.includes(o.id)).map((o) => (
+                      <tr key={o.id} className="hover:bg-gray-100">
+                        <td onClick={() => apriBoOrdine(o)} className="cursor-pointer">{o.id}</td>
+                        <td>{o.customer}</td><td>{o.stato}</td><td>{new Date(o.created_at).toLocaleString()}</td>
+                        <td><button onClick={() => setOrdiniNascostiBo([...ordiniNascostiBo, o.id])} className="text-red-600">❌</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            ) : (
+              <div>
+                <button onClick={() => setOrdineBoSelezionato(null)} className="bg-gray-600 text-white px-4 py-1 rounded mb-4">Torna indietro</button>
+                <h2 className="font-bold mb-2">Ordine {ordineBoSelezionato.id} – {ordineBoSelezionato.customer}</h2>
+                {Object.values(lineeBoOrdine.reduce((acc: any, r) => {
+                  const key = r.articolo + "_" + r.colore;
+                  if (!acc[key]) acc[key] = { ...r, taglie: [] as OrderLine[] };
+                  acc[key].taglie.push(r); return acc;
+                }, {})).map((gruppo: any, idx: number) => {
+                  const rows = sortTaglie(gruppo.taglie.map((t: OrderLine) => t.taglia)).map((taglia) => gruppo.taglie.find((t: OrderLine) => t.taglia === taglia)!);
+                  return (
+                    <div key={idx} className="bg-white shadow rounded-lg p-4 mb-4">
+                      <h2 className="font-bold mb-2">{gruppo.sku} {gruppo.articolo} – {gruppo.colore} – €{Number(gruppo.prezzo).toFixed(2)}</h2>
+                      <table className="w-full border text-center">
+                        <thead>
+                          <tr><th>Taglia</th>{rows.map((r) => (<th key={r.taglia}>{r.taglia}</th>))}</tr>
+                          <tr><td>Ordina</td>{rows.map((r) => (<td key={r.taglia}>{r.richiesti}</td>))}</tr>
+                          <tr><td>Evaso</td>{rows.map((r) => (<td key={r.taglia}>{r.confermati ?? 0}</td>))}</tr>
+                        </thead>
+                      </table>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            <div className="p-4 flex gap-4 items-center">
+              <input placeholder="Cliente" className="border p-2 rounded flex-1" value={cliente} onChange={(e) => setCliente(e.target.value)} />
+              <label className="flex items-center gap-2">Sconto:
+                <input type="number" className="border p-2 rounded w-20" value={sconto} onChange={(e) => setSconto(parseInt(e.target.value) || 0)} /> %
+              </label>
+            </div>
+            <div className="px-4 mb-4 flex flex-wrap gap-4 items-center">
+              <div>
+                <label className="mr-2">Categoria:</label>
+                <select value={filtro} onChange={(e) => setFiltro(e.target.value)} className="border p-2 rounded">
+                  <option value="TUTTI">Tutti</option><option value="GIACCHE">Giacche</option>
+                  <option value="PANTALONI">Pantaloni</option><option value="GIUBBOTTI">Giubbotti</option>
+                  <option value="MAGLIE">Maglie</option><option value="CAPPOTTI">Cappotti</option>
+                  <option value="CAMICIE">Camicie</option>
+                </select>
+              </div>
+              <input type="text" placeholder="Cerca per codice o articolo..." className="border p-2 rounded flex-1" value={ricerca} onChange={(e) => setRicerca(e.target.value)} />
+            </div>
+            <div className="p-4 space-y-6">
+              {Object.values(grouped).map((gruppo: any) => {
+                const rows = sortTaglie(gruppo.taglie.map((t: StockRow) => t.taglia)).map((taglia) => gruppo.taglie.find((t: StockRow) => t.taglia === taglia)!);
+                return (
+                  <div key={gruppo.sku} className="bg-white shadow rounded-lg p-4">
+                    <h2 className="font-bold mb-2">{gruppo.sku} {gruppo.articolo} {gruppo.categoria} – {gruppo.colore} – €{Number(gruppo.prezzo).toFixed(2)}</h2>
+                    <table className="w-full border text-center">
+                      <thead>
+                        <tr><th>Taglia</th>{rows.map((r) => (<th key={r.taglia}>{r.taglia}</th>))}</tr>
+                        <tr><td>Disp.</td>{rows.map((r) => (<td key={r.taglia}>{r.qty}</td>))}</tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>Ordina</td>
+                          {rows.map((r) => (
+                            <td key={r.taglia}>
+                              <input type="number" min={0} max={r.qty} className="w-16 p-1 border rounded text-center"
+                                value={ordiniInput[gruppo.sku]?.[r.taglia] ?? ""}
+                                onFocus={(e) => e.target.select()}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value) || 0;
+                                  setOrdiniInput((prev) => ({ ...prev, [gruppo.sku]: { ...prev[gruppo.sku], [r.taglia]: val } }));
+                                }} />
+                            </td>
+                          ))}
+                        </tr>
+                      </tbody>
+                    </table>
+                    <div className="mt-2 flex gap-2">
+                      <button onClick={() => addToCart(rows, ordiniInput[gruppo.sku] || {})} className="bg-green-600 text-white px-4 py-1 rounded">Aggiungi</button>
+                      <button onClick={() => {
+                        setCarrello((prev) => prev.filter((p) => !rows.find((r) => r.sku === p.sku)));
+                        setOrdiniInput((prev) => { const copia = { ...prev }; delete copia[gruppo.sku]; return copia; });
+                      }} className="bg-gray-600 text-white px-4 py-1 rounded">Svuota</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="p-4 bg-white shadow mt-6">
+              <h2 className="font-bold mb-2">Ordine</h2>
+              <table className="w-full border">
+                <thead><tr><th>Articolo</th><th>Taglia</th><th>Colore</th><th>Q.tà</th><th>Prezzo</th><th>Totale</th></tr></thead>
+                <tbody>
+                  {carrello.map((r) => (
+                    <tr key={r.sku + r.taglia}>
+                      <td>{r.articolo}</td><td>{r.taglia}</td><td>{r.colore}</td><td>{r.ordina}</td>
+                      <td>€{r.prezzo.toFixed(2)}</td><td>€{(r.ordina * r.prezzo).toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="mt-4"><p>Totale: €{totale.toFixed(2)}</p><p>Totale scontato: €{totaleScontato.toFixed(2)}</p></div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button onClick={inviaOrdine} className="bg-blue-600 text-white px-4 py-2 rounded">Invia Ordine</button>
+                <button onClick={svuotaCarrello} className="bg-red-600 text-white px-4 py-2 rounded">Svuota Ordine</button>
+                <button onClick={() => esportaCSV(carrello.map((r) => [r.articolo,r.categoria,r.taglia,r.colore,r.ordina,r.prezzo,r.prezzo*r.ordina]), "ordine.csv")} className="bg-gray-600 text-white px-4 py-2 rounded">Esporta CSV</button>
+                <button onClick={() => esportaExcel(carrello, "ordine.xlsx")} className="bg-gray-600 text-white px-4 py-2 rounded">Esporta Excel</button>
+                <button onClick={() => esportaPDF(["Articolo","Categoria","Taglia","Colore","Q.tà","Prezzo","Totale"], carrello.map((r) => [r.articolo,r.categoria,r.taglia,r.colore,r.ordina,r.prezzo.toFixed(2),(r.prezzo*r.ordina).toFixed(2)]), "Ordine", "ordine.pdf")} className="bg-red-600 text-white px-4 py-2 rounded">Esporta PDF</button>
+              </div>
+            </div>
+          </>
         )}
       </div>
-    ) : (
-      <>
-        <div className="p-4 flex gap-4 items-center">
-          <input placeholder="Cliente" className="border p-2 rounded flex-1" value={cliente} onChange={(e) => setCliente(e.target.value)} />
-          <label className="flex items-center gap-2">Sconto:
-            <input type="number" className="border p-2 rounded w-20" value={sconto} onChange={(e) => setSconto(parseInt(e.target.value) || 0)} /> %
-          </label>
-        </div>
-        <div className="px-4 mb-4 flex flex-wrap gap-4 items-center">
-          <div>
-            <label className="mr-2">Categoria:</label>
-            <select value={filtro} onChange={(e) => setFiltro(e.target.value)} className="border p-2 rounded">
-              <option value="TUTTI">Tutti</option>
-              <option value="GIACCHE">Giacche</option>
-              <option value="PANTALONI">Pantaloni</option>
-              <option value="GIUBBOTTI">Giubbotti</option>
-              <option value="MAGLIE">Maglie</option>
-              <option value="CAPPOTTI">Cappotti</option>
-              <option value="CAMICIE">Camicie</option>
-            </select>
-          </div>
-          <input type="text" placeholder="Cerca per codice o articolo..." className="border p-2 rounded flex-1" value={ricerca} onChange={(e) => setRicerca(e.target.value)} />
-        </div>
-        <div className="p-4 space-y-6">
-          {Object.values(grouped).map((gruppo: any) => {
-            const rows = sortTaglie(gruppo.taglie.map((t: StockRow) => t.taglia)).map((taglia) => gruppo.taglie.find((t: StockRow) => t.taglia === taglia)!);
-            return (
-              <div key={gruppo.sku} className="bg-white shadow rounded-lg p-4">
-                <h2 className="font-bold mb-2">{gruppo.sku} {gruppo.articolo} {gruppo.categoria} – {gruppo.colore} – €{Number(gruppo.prezzo).toFixed(2)}</h2>
-                <div className="overflow-x-auto">
-                  <table className="min-w-max border text-center">
-                    <thead>
-                      <tr><th className="px-2">Taglia</th>{rows.map((r) => (<th key={r.taglia} className="px-2">{r.taglia}</th>))}</tr>
-                      <tr><td className="px-2">Disp.</td>{rows.map((r) => (<td key={r.taglia}>{r.qty}</td>))}</tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td className="px-2">Ordina</td>
-                        {rows.map((r) => (
-                          <td key={r.taglia}>
-                            <input type="number" min={0} max={r.qty} className="w-16 p-1 border rounded text-center"
-                              value={ordiniInput[gruppo.sku]?.[r.taglia] ?? ""}
-                              onFocus={(e) => e.target.select()}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value) || 0;
-                                setOrdiniInput((prev) => ({
-                                  ...prev,
-                                  [gruppo.sku]: { ...prev[gruppo.sku], [r.taglia]: val },
-                                }));
-                              }}
-                            />
-                          </td>
-                        ))}
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-                <div className="mt-2 flex gap-2">
-                  <button onClick={() => addToCart(rows, ordiniInput[gruppo.sku] || {})} className="bg-green-600 text-white px-4 py-1 rounded">Aggiungi</button>
-                  <button onClick={() => {
-                    setCarrello((prev) => prev.filter((p) => !rows.find((r) => r.sku === p.sku)));
-                    setOrdiniInput((prev) => { const copia = { ...prev }; delete copia[gruppo.sku]; return copia; });
-                  }} className="bg-gray-600 text-white px-4 py-1 rounded">Svuota</button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        <div className="p-4 bg-white shadow mt-6">
-          <h2 className="font-bold mb-2">Ordine</h2>
-          <table className="w-full border">
-            <thead><tr><th>Articolo</th><th>Taglia</th><th>Colore</th><th>Q.tà</th><th>Prezzo</th><th>Totale</th></tr></thead>
-            <tbody>
-              {carrello.map((r) => (
-                <tr key={r.sku + r.taglia}>
-                  <td>{r.articolo}</td><td>{r.taglia}</td><td>{r.colore}</td><td>{r.ordina}</td>
-                  <td>€{r.prezzo.toFixed(2)}</td><td>€{(r.ordina * r.prezzo).toFixed(2)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div className="mt-4"><p>Totale: €{totale.toFixed(2)}</p><p>Totale scontato: €{totaleScontato.toFixed(2)}</p></div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <button onClick={inviaOrdine} className="bg-blue-600 text-white px-4 py-2 rounded">Invia Ordine</button>
-            <button onClick={svuotaCarrello} className="bg-red-600 text-white px-4 py-2 rounded">Svuota Ordine</button>
-            <button className="bg-gray-600 text-white px-4 py-2 rounded">Esporta CSV</button>
-            <button className="bg-gray-600 text-white px-4 py-2 rounded">Esporta Excel</button>
-            <button className="bg-red-600 text-white px-4 py-2 rounded">Esporta PDF</button>
-          </div>
-        </div>
-      </>
-    )}
-  </div>
-);
-}
-return null;
+    );
+  }
+
+  return null;
 }
