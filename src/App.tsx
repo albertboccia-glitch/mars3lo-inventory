@@ -88,6 +88,16 @@ export default function App() {
   const [ordiniNascostiNa, setOrdiniNascostiNa] = useState<string[]>([]);
   const [ordiniNascostiBo, setOrdiniNascostiBo] = useState<string[]>([]);
 
+  // 🔹 Feedback visivo click pulsanti
+  const clickWithHighlight = (action: () => void) => {
+    return (e: React.MouseEvent<HTMLButtonElement>) => {
+      const btn = e.currentTarget;
+      btn.classList.add("ring-4", "ring-yellow-400");
+      setTimeout(() => btn.classList.remove("ring-4", "ring-yellow-400"), 1000);
+      action();
+    };
+  };
+
   // 🔹 Login
   const handleLogin = () => {
     if (loginId === "Mars3loBo" && loginPw === "Francesco01") {
@@ -122,8 +132,16 @@ export default function App() {
   const apriOrdine = async (ordine: Order) => {
     setOrdineSelezionato(ordine);
     let { data } = await supabase.from("order_lines").select("*").eq("order_id", ordine.id);
-    if (data) setLineeOrdine(data as OrderLine[]);
+    if (data) {
+      setLineeOrdine(
+        (data as OrderLine[]).map((l) => ({
+          ...l,
+          confermati: l.confermati ?? l.richiesti, // ✅ default = richiesti
+        }))
+      );
+    }
   };
+
   // 🔹 Apri ordine Bologna
   const apriBoOrdine = async (ordine: Order) => {
     setOrdineBoSelezionato(ordine);
@@ -148,6 +166,7 @@ export default function App() {
     alert("Ordine aggiornato!");
     setOrdineSelezionato(null); setLineeOrdine([]);
   };
+
   // 🔹 Annulla ordine Napoli
   const annullaOrdine = async () => {
     if (!ordineSelezionato) return;
@@ -192,7 +211,6 @@ export default function App() {
     alert("Ordine inviato!");
     svuotaCarrello();
   };
-
   // 🔹 Export helpers
   const esportaCSV = (rows: any[], filename: string) => {
     const csv = rows.map((r) => r.join(",")).join("\n");
@@ -222,7 +240,7 @@ export default function App() {
           <h1 className="text-white text-xl mb-4">Mars3lo B2B</h1>
           <input className="w-full mb-2 p-2 rounded" placeholder="ID" value={loginId} onChange={(e) => setLoginId(e.target.value)} />
           <input type="password" className="w-full mb-4 p-2 rounded" placeholder="Password" value={loginPw} onChange={(e) => setLoginPw(e.target.value)} />
-          <button onClick={handleLogin} className="bg-red-600 text-white px-4 py-2 rounded w-full">Accedi</button>
+          <button onClick={clickWithHighlight(handleLogin)} className="bg-red-600 text-white px-4 py-2 rounded w-full">Accedi</button>
         </div>
       </div>
     );
@@ -230,106 +248,106 @@ export default function App() {
 
   // 🔹 UI Napoli
   if (ruolo === "na") {
-    // lista / dettaglio ordini
-    if (showNotifiche) {
-      return (
-        <div className="min-h-screen bg-gray-100">
-          <div className="bg-black p-4 flex justify-between items-center">
-            <h1 className="text-white text-xl font-bold">Napoli – Ordini</h1>
-            <button onClick={() => { setShowNotifiche(false); setOrdineSelezionato(null); }} className="bg-gray-600 text-white px-4 py-1 rounded">Torna indietro</button>
-          </div>
-          {!ordineSelezionato ? (
-            <div className="p-4">
-              <h2 className="font-bold mb-2">Ordini in attesa</h2>
-              <table className="w-full border">
-                <thead><tr><th>ID</th><th>Cliente</th><th>Stato</th><th>Data</th><th></th></tr></thead>
-                <tbody>
-                  {ordini.filter((o) => o.stato === "In attesa" && !ordiniNascostiNa.includes(o.id)).map((o) => (
-                    <tr key={o.id} className="hover:bg-gray-100">
-                      <td onClick={() => apriOrdine(o)} className="cursor-pointer">{o.id}</td>
-                      <td>{o.customer}</td><td>{o.stato}</td><td>{new Date(o.created_at).toLocaleString()}</td>
-                      <td><button onClick={() => setOrdiniNascostiNa([...ordiniNascostiNa, o.id])} className="text-red-600">❌</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="p-4">
-              <button onClick={() => setOrdineSelezionato(null)} className="bg-gray-600 text-white px-4 py-1 rounded mb-4">Torna indietro</button>
-              <h2 className="font-bold mb-2">Ordine {ordineSelezionato.id} – {ordineSelezionato.customer}</h2>
-              {Object.values(lineeOrdine.reduce((acc: any, r) => {
-                const key = r.articolo + "_" + r.colore;
-                if (!acc[key]) acc[key] = { ...r, taglie: [] as OrderLine[] };
-                acc[key].taglie.push(r); return acc;
-              }, {})).map((gruppo: any, idx: number) => {
-                const rows = sortTaglie(gruppo.taglie.map((t: OrderLine) => t.taglia)).map((taglia) => gruppo.taglie.find((t: OrderLine) => t.taglia === taglia)!);
-                return (
-                  <div key={idx} className="bg-white shadow rounded-lg p-4 mb-4">
-                    <h2 className="font-bold mb-2">{gruppo.sku} {gruppo.articolo} – {gruppo.colore} – €{Number(gruppo.prezzo).toFixed(2)}</h2>
-                    <table className="w-full border text-center">
-                      <thead>
-                        <tr><th>Taglia</th>{rows.map((r) => (<th key={r.taglia}>{r.taglia}</th>))}</tr>
-                        <tr><td>Ordina</td>{rows.map((r) => (<td key={r.taglia}>{r.richiesti}</td>))}</tr>
-                        <tr><td>Evaso</td>{rows.map((r, i) => (
-                          <td key={i}>
-                            <input type="number" min={0} max={r.richiesti} value={r.confermati ?? r.richiesti}
-                              onChange={(e) => {
-                                const v = parseInt(e.target.value) || 0;
-                                setLineeOrdine((prev) => prev.map((x) => (x.sku === r.sku && x.taglia === r.taglia ? { ...x, confermati: v } : x)));
-                              }}
-                              className="w-16 p-1 border rounded text-center" />
-                          </td>
-                        ))}</tr>
-                      </thead>
-                    </table>
-                  </div>
-                );
-              })}
-              <div className="mt-4 flex gap-2">
-                <button onClick={confermaOrdine} className="bg-green-600 text-white px-4 py-2 rounded">Conferma</button>
-                <button onClick={annullaOrdine} className="bg-red-600 text-white px-4 py-2 rounded">Annulla</button>
-              </div>
-            </div>
-          )}
-        </div>
-      );
-    }
-
-    // magazzino Napoli
-    const groupedStock = stock.reduce((acc: any, row) => {
-      const key = row.articolo + "_" + row.colore;
-      if (!acc[key]) acc[key] = { ...row, taglie: [] as StockRow[] };
-      acc[key].taglie.push(row); return acc;
-    }, {});
-
     return (
       <div className="min-h-screen bg-gray-100">
         <div className="bg-black p-4 flex justify-between items-center">
-          <h1 className="text-white text-xl font-bold">Napoli – Magazzino</h1>
-          <button onClick={() => setShowNotifiche(true)} className="bg-blue-600 text-white px-4 py-1 rounded">Notifiche Ordini</button>
+          <div className="flex items-center">
+            <img src="/mars3lo.png" alt="Mars3lo" className="h-10 mr-4" />
+            <h1 className="text-white text-xl font-bold">Napoli – Magazzino</h1>
+          </div>
+          <button onClick={clickWithHighlight(() => setShowNotifiche(true))} className="bg-blue-600 text-white px-4 py-1 rounded">Ordini</button>
         </div>
-        <div className="p-4 space-y-6">
-          {Object.values(groupedStock).map((gruppo: any, idx: number) => {
-            const rows = sortTaglie(gruppo.taglie.map((t: StockRow) => t.taglia)).map((taglia) => gruppo.taglie.find((t: StockRow) => t.taglia === taglia)!);
-            return (
-              <div key={idx} className="bg-white shadow rounded-lg p-4">
-                <h2 className="font-bold mb-2">{gruppo.sku} {gruppo.articolo} {gruppo.categoria} – {gruppo.colore} – €{Number(gruppo.prezzo).toFixed(2)}</h2>
-                <table className="w-full border text-center">
-                  <thead>
-                    <tr><th>Taglia</th>{rows.map((r) => (<th key={r.taglia}>{r.taglia}</th>))}</tr>
-                    <tr><td>Disp.</td>{rows.map((r) => (<td key={r.taglia}>{r.qty}</td>))}</tr>
-                  </thead>
+
+        {showNotifiche ? (
+          <div className="p-4">
+            {!ordineSelezionato ? (
+              <>
+                <button onClick={clickWithHighlight(() => setShowNotifiche(false))} className="bg-gray-600 text-white px-4 py-1 rounded mb-4">Torna indietro</button>
+                <h2 className="font-bold mb-2">Ordini da gestire</h2>
+                <table className="w-full border">
+                  <thead><tr><th>ID</th><th>Cliente</th><th>Stato</th><th>Data</th><th></th></tr></thead>
+                  <tbody>
+                    {ordini.filter((o) => !ordiniNascostiNa.includes(o.id)).map((o) => (
+                      <tr key={o.id} className="hover:bg-gray-100">
+                        <td onClick={() => apriOrdine(o)} className="cursor-pointer">{o.id}</td>
+                        <td>{o.customer}</td><td>{o.stato}</td><td>{new Date(o.created_at).toLocaleString()}</td>
+                        <td><button onClick={clickWithHighlight(() => setOrdiniNascostiNa([...ordiniNascostiNa, o.id]))} className="text-red-600">❌</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
                 </table>
+              </>
+            ) : (
+              <div>
+                <button onClick={clickWithHighlight(() => setOrdineSelezionato(null))} className="bg-gray-600 text-white px-4 py-1 rounded mb-4">Torna indietro</button>
+                <h2 className="font-bold mb-2">Ordine {ordineSelezionato.id} – {ordineSelezionato.customer}</h2>
+                {Object.values(lineeOrdine.reduce((acc: any, r) => {
+                  const key = r.articolo + "_" + r.colore;
+                  if (!acc[key]) acc[key] = { ...r, taglie: [] as OrderLine[] };
+                  acc[key].taglie.push(r); return acc;
+                }, {})).map((gruppo: any, idx: number) => {
+                  const rows = sortTaglie(gruppo.taglie.map((t: OrderLine) => t.taglia)).map((taglia) => gruppo.taglie.find((t: OrderLine) => t.taglia === taglia)!);
+                  return (
+                    <div key={idx} className="bg-white shadow rounded-lg p-4 mb-4">
+                      <h2 className="font-bold mb-2">{gruppo.sku} {gruppo.articolo} – {gruppo.colore} – €{Number(gruppo.prezzo).toFixed(2)}</h2>
+                      <table className="w-full border text-center">
+                        <thead>
+                          <tr><th>Taglia</th>{rows.map((r) => (<th key={r.taglia}>{r.taglia}</th>))}</tr>
+                          <tr><td>Ordina</td>{rows.map((r) => (<td key={r.taglia}>{r.richiesti}</td>))}</tr>
+                          <tr><td>Evaso</td>{rows.map((r) => (
+                            <td key={r.taglia}>
+                              <input type="number" className="w-16 p-1 border rounded text-center"
+                                value={r.confermati ?? 0}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value) || 0;
+                                  setLineeOrdine((prev) =>
+                                    prev.map((x) =>
+                                      x.sku === r.sku && x.taglia === r.taglia ? { ...x, confermati: val } : x
+                                    )
+                                  );
+                                }} />
+                            </td>
+                          ))}</tr>
+                        </thead>
+                      </table>
+                    </div>
+                  );
+                })}
+                <div className="flex gap-2 mt-4">
+                  <button onClick={clickWithHighlight(confermaOrdine)} className="bg-green-600 text-white px-4 py-2 rounded">Conferma</button>
+                  <button onClick={clickWithHighlight(annullaOrdine)} className="bg-red-600 text-white px-4 py-2 rounded">Annulla</button>
+                </div>
               </div>
-            );
-          })}
-        </div>
-        <div className="p-4 flex flex-wrap gap-2">
-          <button onClick={() => esportaCSV(stock.map((s) => [s.sku, s.articolo, s.categoria, s.colore, s.taglia, s.qty, s.prezzo]), "magazzino.csv")} className="bg-gray-600 text-white px-4 py-2 rounded">Esporta CSV</button>
-          <button onClick={() => esportaExcel(stock, "magazzino.xlsx")} className="bg-gray-600 text-white px-4 py-2 rounded">Esporta Excel</button>
-          <button onClick={() => esportaPDF(["SKU","Articolo","Categoria","Colore","Taglia","Qty","Prezzo"], stock.map((s) => [s.sku,s.articolo,s.categoria,s.colore,s.taglia,s.qty,s.prezzo]), "Magazzino", "magazzino.pdf")} className="bg-red-600 text-white px-4 py-2 rounded">Esporta PDF</button>
-        </div>
+            )}
+          </div>
+        ) : (
+          <div className="p-4">
+            <h2 className="font-bold mb-4">Magazzino</h2>
+            {Object.values(stock.reduce((acc: any, row) => {
+              const key = row.articolo + "_" + row.colore;
+              if (!acc[key]) acc[key] = { ...row, taglie: [] as StockRow[] };
+              acc[key].taglie.push(row); return acc;
+            }, {})).map((gruppo: any, idx: number) => {
+              const rows = sortTaglie(gruppo.taglie.map((t: StockRow) => t.taglia)).map((taglia) => gruppo.taglie.find((t: StockRow) => t.taglia === taglia)!);
+              return (
+                <div key={idx} className="bg-white shadow rounded-lg p-4 mb-4">
+                  <h2 className="font-bold mb-2">{gruppo.sku} {gruppo.articolo} {gruppo.categoria} – {gruppo.colore} – €{Number(gruppo.prezzo).toFixed(2)}</h2>
+                  <table className="w-full border text-center">
+                    <thead>
+                      <tr><th>Taglia</th>{rows.map((r) => (<th key={r.taglia}>{r.taglia}</th>))}</tr>
+                      <tr><td>Disp.</td>{rows.map((r) => (<td key={r.taglia}>{r.qty}</td>))}</tr>
+                    </thead>
+                  </table>
+                </div>
+              );
+            })}
+            <div className="flex gap-2 mt-4">
+              <button onClick={clickWithHighlight(() => esportaCSV(stock.map((s) => [s.sku, s.articolo, s.categoria, s.colore, s.taglia, s.qty, s.prezzo]), "magazzino.csv"))} className="bg-gray-600 text-white px-4 py-2 rounded">Esporta CSV</button>
+              <button onClick={clickWithHighlight(() => esportaExcel(stock, "magazzino.xlsx"))} className="bg-gray-600 text-white px-4 py-2 rounded">Esporta Excel</button>
+              <button onClick={clickWithHighlight(() => esportaPDF(["SKU","Articolo","Categoria","Colore","Taglia","Qty","Prezzo"], stock.map((s) => [s.sku,s.articolo,s.categoria,s.colore,s.taglia,s.qty,s.prezzo]), "Magazzino", "magazzino.pdf"))} className="bg-red-600 text-white px-4 py-2 rounded">Esporta PDF</button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -351,14 +369,14 @@ export default function App() {
             <img src="/mars3lo.png" alt="Mars3lo" className="h-10 mr-4" />
             <h1 className="text-white text-xl font-bold">Bologna</h1>
           </div>
-          <button onClick={() => setShowNotifiche(true)} className="bg-blue-600 text-white px-4 py-1 rounded">Ordini Evasi</button>
+          <button onClick={clickWithHighlight(() => setShowNotifiche(true))} className="bg-blue-600 text-white px-4 py-1 rounded">Ordini Evasi</button>
         </div>
 
         {showNotifiche ? (
           <div className="p-4">
             {!ordineBoSelezionato ? (
               <>
-                <button onClick={() => setShowNotifiche(false)} className="bg-gray-600 text-white px-4 py-1 rounded mb-4">Torna indietro</button>
+                <button onClick={clickWithHighlight(() => setShowNotifiche(false))} className="bg-gray-600 text-white px-4 py-1 rounded mb-4">Torna indietro</button>
                 <h2 className="font-bold mb-2">Ordini Evasi</h2>
                 <table className="w-full border">
                   <thead><tr><th>ID</th><th>Cliente</th><th>Stato</th><th>Data</th><th></th></tr></thead>
@@ -367,7 +385,7 @@ export default function App() {
                       <tr key={o.id} className="hover:bg-gray-100">
                         <td onClick={() => apriBoOrdine(o)} className="cursor-pointer">{o.id}</td>
                         <td>{o.customer}</td><td>{o.stato}</td><td>{new Date(o.created_at).toLocaleString()}</td>
-                        <td><button onClick={() => setOrdiniNascostiBo([...ordiniNascostiBo, o.id])} className="text-red-600">❌</button></td>
+                        <td><button onClick={clickWithHighlight(() => setOrdiniNascostiBo([...ordiniNascostiBo, o.id]))} className="text-red-600">❌</button></td>
                       </tr>
                     ))}
                   </tbody>
@@ -375,7 +393,7 @@ export default function App() {
               </>
             ) : (
               <div>
-                <button onClick={() => setOrdineBoSelezionato(null)} className="bg-gray-600 text-white px-4 py-1 rounded mb-4">Torna indietro</button>
+                <button onClick={clickWithHighlight(() => setOrdineBoSelezionato(null))} className="bg-gray-600 text-white px-4 py-2 rounded mb-4">Torna indietro</button>
                 <h2 className="font-bold mb-2">Ordine {ordineBoSelezionato.id} – {ordineBoSelezionato.customer}</h2>
                 {Object.values(lineeBoOrdine.reduce((acc: any, r) => {
                   const key = r.articolo + "_" + r.colore;
@@ -448,11 +466,11 @@ export default function App() {
                       </tbody>
                     </table>
                     <div className="mt-2 flex gap-2">
-                      <button onClick={() => addToCart(rows, ordiniInput[gruppo.sku] || {})} className="bg-green-600 text-white px-4 py-1 rounded">Aggiungi</button>
-                      <button onClick={() => {
+                      <button onClick={clickWithHighlight(() => addToCart(rows, ordiniInput[gruppo.sku] || {}))} className="bg-green-600 text-white px-4 py-1 rounded">Aggiungi</button>
+                      <button onClick={clickWithHighlight(() => {
                         setCarrello((prev) => prev.filter((p) => !rows.find((r) => r.sku === p.sku)));
                         setOrdiniInput((prev) => { const copia = { ...prev }; delete copia[gruppo.sku]; return copia; });
-                      }} className="bg-gray-600 text-white px-4 py-1 rounded">Svuota</button>
+                      })} className="bg-gray-600 text-white px-4 py-1 rounded">Svuota</button>
                     </div>
                   </div>
                 );
@@ -462,22 +480,20 @@ export default function App() {
               <h2 className="font-bold mb-2">Ordine</h2>
               <table className="w-full border">
                 <thead><tr><th>Articolo</th><th>Taglia</th><th>Colore</th><th>Q.tà</th><th>Prezzo</th><th>Totale</th></tr></thead>
-                <tbody>
-                  {carrello.map((r) => (
-                    <tr key={r.sku + r.taglia}>
-                      <td>{r.articolo}</td><td>{r.taglia}</td><td>{r.colore}</td><td>{r.ordina}</td>
-                      <td>€{r.prezzo.toFixed(2)}</td><td>€{(r.ordina * r.prezzo).toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
+                <tbody>{carrello.map((r) => (
+                  <tr key={r.sku + r.taglia}>
+                    <td>{r.articolo}</td><td>{r.taglia}</td><td>{r.colore}</td><td>{r.ordina}</td>
+                    <td>€{r.prezzo.toFixed(2)}</td><td>€{(r.ordina * r.prezzo).toFixed(2)}</td>
+                  </tr>
+                ))}</tbody>
               </table>
               <div className="mt-4"><p>Totale: €{totale.toFixed(2)}</p><p>Totale scontato: €{totaleScontato.toFixed(2)}</p></div>
               <div className="mt-4 flex flex-wrap gap-2">
-                <button onClick={inviaOrdine} className="bg-blue-600 text-white px-4 py-2 rounded">Invia Ordine</button>
-                <button onClick={svuotaCarrello} className="bg-red-600 text-white px-4 py-2 rounded">Svuota Ordine</button>
-                <button onClick={() => esportaCSV(carrello.map((r) => [r.articolo,r.categoria,r.taglia,r.colore,r.ordina,r.prezzo,r.prezzo*r.ordina]), "ordine.csv")} className="bg-gray-600 text-white px-4 py-2 rounded">Esporta CSV</button>
-                <button onClick={() => esportaExcel(carrello, "ordine.xlsx")} className="bg-gray-600 text-white px-4 py-2 rounded">Esporta Excel</button>
-                <button onClick={() => esportaPDF(["Articolo","Categoria","Taglia","Colore","Q.tà","Prezzo","Totale"], carrello.map((r) => [r.articolo,r.categoria,r.taglia,r.colore,r.ordina,r.prezzo.toFixed(2),(r.prezzo*r.ordina).toFixed(2)]), "Ordine", "ordine.pdf")} className="bg-red-600 text-white px-4 py-2 rounded">Esporta PDF</button>
+                <button onClick={clickWithHighlight(inviaOrdine)} className="bg-blue-600 text-white px-4 py-2 rounded">Invia Ordine</button>
+                <button onClick={clickWithHighlight(svuotaCarrello)} className="bg-red-600 text-white px-4 py-2 rounded">Svuota Ordine</button>
+                <button onClick={clickWithHighlight(() => esportaCSV(carrello.map((r) => [r.articolo, r.categoria, r.taglia, r.colore, r.ordina, r.prezzo.toFixed(2), (r.ordina * r.prezzo).toFixed(2)]), "ordine.csv"))} className="bg-gray-600 text-white px-4 py-2 rounded">Esporta CSV</button>
+                <button onClick={clickWithHighlight(() => esportaExcel(carrello, "ordine.xlsx"))} className="bg-gray-600 text-white px-4 py-2 rounded">Esporta Excel</button>
+                <button onClick={clickWithHighlight(() => esportaPDF(["Articolo","Categoria","Taglia","Colore","Q.tà","Prezzo","Totale"], carrello.map((r) => [r.articolo,r.categoria,r.taglia,r.colore,r.ordina,`€${r.prezzo.toFixed(2)}`,`€${(r.ordina*r.prezzo).toFixed(2)}`]), "Ordine cliente", "ordine.pdf"))} className="bg-red-600 text-white px-4 py-2 rounded">Esporta PDF</button>
               </div>
             </div>
           </>
