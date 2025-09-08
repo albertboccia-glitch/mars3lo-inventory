@@ -496,4 +496,6 @@ export default function App() {
         )}
       </div>
     );
-  }
+ } // chiude if (role === "NA")
+
+} // chiude export default function App
