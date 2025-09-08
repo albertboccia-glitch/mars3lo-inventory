@@ -497,5 +497,62 @@ export default function App() {
       </div>
     );
  } // chiude if (role === "NA")
+  // 🔹 UI Login
+  if (!logged) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-black">
+        <div className="bg-gray-900 p-8 rounded-xl w-80 text-center">
+          <img src="/mars3lo.png" alt="Mars3lo" className="mx-auto mb-4 w-32" />
+          <h1 className="text-white text-xl mb-4">Mars3lo B2B</h1>
+          <input
+            className="w-full mb-2 p-2 rounded"
+            placeholder="ID"
+            value={loginId}
+            onChange={(e) => setLoginId(e.target.value)}
+          />
+          <input
+            type="password"
+            className="w-full mb-4 p-2 rounded"
+            placeholder="Password"
+            value={loginPw}
+            onChange={(e) => setLoginPw(e.target.value)}
+          />
+          <button
+            onClick={handleLogin}
+            className="bg-red-600 text-white px-4 py-2 rounded w-full"
+          >
+            Accedi
+          </button>
+        </div>
+      </div>
+    );
+  }
 
+  // 🔹 Interfaccia Bologna
+  if (role === "BO") {
+    // 👉 qui c'è il blocco Bologna che ti ho dato
+    return (
+      <>
+        {/* BLOCCO 1 – BOLOGNA */}
+      </>
+    );
+  }
+
+  // 🔹 Interfaccia Napoli
+  if (role === "NA") {
+    // 👉 qui c'è il blocco Napoli che ti ho dato
+    return (
+      <>
+        {/* BLOCCO 2 – NAPOLI */}
+      </>
+    );
+  }
+
+  // 🔹 Fallback (evita pagina bianca)
+  return (
+    <div className="p-8 text-center">
+      <h2>Interfaccia non disponibile</h2>
+    </div>
+  );
+} // 👈 chiusura finale della funzione App
 } // chiude export default function App
