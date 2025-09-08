@@ -424,7 +424,56 @@ export default function App() {
   // 🔹 INTERFACCIA NAPOLI
   // ===============================
   if (role === "NA") {
-    // 🔹 Funzioni di export
+    const [paginaNapoli, setPaginaNapoli] = useState<"magazzino" | "ordini" | "dettaglio">("magazzino");
+    const [ordini, setOrdini] = useState<any[]>([]);
+    const [ordineSelezionato, setOrdineSelezionato] = useState<any | null>(null);
+    const [righeOrdine, setRigheOrdine] = useState<any[]>([]);
+
+    // 🔹 Carica ordini da Supabase
+    const fetchOrdini = async () => {
+      const { data, error } = await supabase
+        .from("orders")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (!error && data) setOrdini(data);
+    };
+
+    // 🔹 Elimina ordine (solo dalla lista, non magazzino)
+    const eliminaOrdine = async (id: string) => {
+      if (!confirm("Vuoi eliminare questo ordine dalla lista?")) return;
+      await supabase.from("orders").delete().eq("id", id);
+      await supabase.from("order_lines").delete().eq("order_id", id);
+      fetchOrdini();
+    };
+
+    // 🔹 Apri ordine in dettaglio
+    const apriOrdine = async (ordine: any) => {
+      const { data: righe } = await supabase
+        .from("order_lines")
+        .select("*")
+        .eq("order_id", ordine.id);
+      setOrdineSelezionato(ordine);
+      setRigheOrdine(righe || []);
+      setPaginaNapoli("dettaglio");
+    };
+
+    // 🔹 Conferma ordine
+    const confermaOrdine = async () => {
+      if (!ordineSelezionato) return;
+      for (const r of righeOrdine) {
+        await supabase
+          .from("order_lines")
+          .update({ confermati: r.confermati })
+          .eq("id", r.id);
+      }
+      await supabase.from("orders").update({ stato: "Evaso" }).eq("id", ordineSelezionato.id);
+      await supabase.rpc("scala_magazzino_da_ordini");
+      alert("Ordine evaso!");
+      setPaginaNapoli("ordini");
+      fetchOrdini();
+    };
+
+    // 🔹 Funzioni export magazzino
     const esportaMagazzinoCSV = () => {
       const header = ["Articolo", "Categoria", "Taglia", "Colore", "Q.tà", "Prezzo"];
       const rows = stock.map((r) => [
@@ -477,6 +526,7 @@ export default function App() {
       doc.save("magazzino.pdf");
     };
 
+    // 🔹 Render Napoli
     return (
       <div className="min-h-screen bg-gray-100">
         {/* Barra nera */}
@@ -485,150 +535,210 @@ export default function App() {
             <img src="/mars3lo.png" alt="Mars3lo" className="h-10 mr-4" />
             <h1 className="text-white text-xl font-bold">Mars3lo B2B – Napoli</h1>
           </div>
-          <button
-            onClick={async () => {
-              const { data: orders } = await supabase
-                .from("orders")
-                .select("*")
-                .eq("stato", "In attesa")
-                .order("created_at", { ascending: false });
-
-              if (!orders || orders.length === 0) {
-                alert("Nessun ordine da evadere");
-                return;
-              }
-
-              const id = prompt(
-                "Ordini da evadere:\n" +
-                  orders.map((o: any) => `${o.id} - ${o.customer}`).join("\n") +
-                  "\n\nInserisci ID ordine da aprire:"
-              );
-              if (!id) return;
-
-              const { data: lines } = await supabase
-                .from("order_lines")
-                .select("*")
-                .eq("order_id", id);
-
-              if (!lines || lines.length === 0) {
-                alert("Ordine vuoto!");
-                return;
-              }
-
-              // Per ogni riga chiediamo confermati
-              const confermati: { [k: number]: number } = {};
-              for (const r of lines) {
-                const val = prompt(
-                  `${r.articolo} ${r.colore} taglia ${r.taglia}\nRichiesti: ${r.richiesti}\nConfermati:`,
-                  r.richiesti
-                );
-                confermati[r.id] = parseInt(val || "0");
-              }
-
-              // Aggiorna righe
-              for (const r of lines) {
-                await supabase
-                  .from("order_lines")
-                  .update({ confermati: confermati[r.id] })
-                  .eq("id", r.id);
-              }
-
-              // Aggiorna stato ordine
-              await supabase
-                .from("orders")
-                .update({ stato: "Evaso" })
-                .eq("id", id);
-
-              // Scala magazzino
-              await supabase.rpc("scala_magazzino_da_ordini");
-
-              alert("Ordine evaso e magazzino aggiornato!");
-            }}
-            className="bg-yellow-500 text-black px-4 py-2 rounded"
-          >
-            Ordini
-          </button>
-        </div>
-
-        {/* Filtro categorie + ricerca */}
-        <div className="px-4 mb-4 flex flex-wrap gap-4 items-center">
-          <div>
-            <label className="mr-2">Categoria:</label>
-            <select
-              value={filtro}
-              onChange={(e) => setFiltro(e.target.value)}
-              className="border p-2 rounded"
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                fetchOrdini();
+                setPaginaNapoli("ordini");
+              }}
+              className="bg-yellow-500 text-black px-4 py-2 rounded"
             >
-              <option value="TUTTI">Tutti</option>
-              <option value="GIACCHE">Giacche</option>
-              <option value="PANTALONI">Pantaloni</option>
-              <option value="GIUBBOTTI">Giubbotti</option>
-              <option value="MAGLIE">Maglie</option>
-              <option value="CAPPOTTI">Cappotti</option>
-              <option value="CAMICIE">Camicie</option>
-            </select>
+              Ordini
+            </button>
           </div>
-          <input
-            type="text"
-            placeholder="Cerca per codice o articolo..."
-            className="border p-2 rounded flex-1"
-            value={ricerca}
-            onChange={(e) => setRicerca(e.target.value)}
-          />
         </div>
 
-        {/* Griglia articoli (senza riga Ordina) */}
-        <div className="p-4 space-y-6">
-          {Object.values(grouped).map((gruppo: any) => {
-            const rows: StockRow[] = sortTaglie(
-              gruppo.taglie.map((t: StockRow) => t.taglia)
-            ).map((taglia) =>
-              gruppo.taglie.find((t: StockRow) => t.taglia === taglia)!
-            );
-
-            return (
-              <div key={gruppo.sku} className="bg-white shadow rounded-lg p-4">
-                <h2 className="font-bold mb-2">
-                  {gruppo.articolo} {gruppo.categoria} – {gruppo.colore} – €
-                  {Number(gruppo.prezzo).toFixed(2)}
-                </h2>
-                <div className="overflow-x-auto">
-                  <table className="min-w-max border text-center">
-                    <thead>
-                      <tr>
-                        <th className="px-2">Taglia</th>
-                        {rows.map((r) => (
-                          <th key={r.taglia} className="px-2">
-                            {r.taglia}
-                          </th>
-                        ))}
-                      </tr>
-                      <tr>
-                        <td className="px-2">Disp.</td>
-                        {rows.map((r) => (
-                          <td key={r.taglia}>{r.qty}</td>
-                        ))}
-                      </tr>
-                    </thead>
-                  </table>
-                </div>
+        {/* Magazzino */}
+        {paginaNapoli === "magazzino" && (
+          <>
+            {/* Filtro categorie + ricerca */}
+            <div className="px-4 mb-4 flex flex-wrap gap-4 items-center">
+              <div>
+                <label className="mr-2">Categoria:</label>
+                <select
+                  value={filtro}
+                  onChange={(e) => setFiltro(e.target.value)}
+                  className="border p-2 rounded"
+                >
+                  <option value="TUTTI">Tutti</option>
+                  <option value="GIACCHE">Giacche</option>
+                  <option value="PANTALONI">Pantaloni</option>
+                  <option value="GIUBBOTTI">Giubbotti</option>
+                  <option value="MAGLIE">Maglie</option>
+                  <option value="CAPPOTTI">Cappotti</option>
+                  <option value="CAMICIE">Camicie</option>
+                </select>
               </div>
-            );
-          })}
-        </div>
+              <input
+                type="text"
+                placeholder="Cerca per codice o articolo..."
+                className="border p-2 rounded flex-1"
+                value={ricerca}
+                onChange={(e) => setRicerca(e.target.value)}
+              />
+            </div>
 
-        {/* Pulsanti export */}
-        <div className="p-4 bg-white shadow mt-6 flex flex-wrap gap-2">
-          <button onClick={esportaMagazzinoCSV} className="bg-gray-600 text-white px-4 py-2 rounded">
-            Esporta CSV
-          </button>
-          <button onClick={esportaMagazzinoExcel} className="bg-gray-600 text-white px-4 py-2 rounded">
-            Esporta Excel
-          </button>
-          <button onClick={esportaMagazzinoPDF} className="bg-red-600 text-white px-4 py-2 rounded">
-            Esporta PDF
-          </button>
-        </div>
+            {/* Griglia articoli */}
+            <div className="p-4 space-y-6">
+              {Object.values(grouped).map((gruppo: any) => {
+                const rows: StockRow[] = sortTaglie(
+                  gruppo.taglie.map((t: StockRow) => t.taglia)
+                ).map((taglia) =>
+                  gruppo.taglie.find((t: StockRow) => t.taglia === taglia)!
+                );
+
+                return (
+                  <div key={gruppo.sku} className="bg-white shadow rounded-lg p-4">
+                    <h2 className="font-bold mb-2">
+                      {gruppo.articolo} {gruppo.categoria} – {gruppo.colore} – €
+                      {Number(gruppo.prezzo).toFixed(2)}
+                    </h2>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-max border text-center">
+                        <thead>
+                          <tr>
+                            <th className="px-2">Taglia</th>
+                            {rows.map((r) => (
+                              <th key={r.taglia} className="px-2">
+                                {r.taglia}
+                              </th>
+                            ))}
+                          </tr>
+                          <tr>
+                            <td className="px-2">Disp.</td>
+                            {rows.map((r) => (
+                              <td key={r.taglia}>{r.qty}</td>
+                            ))}
+                          </tr>
+                        </thead>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Pulsanti export */}
+            <div className="p-4 bg-white shadow mt-6 flex flex-wrap gap-2">
+              <button onClick={esportaMagazzinoCSV} className="bg-gray-600 text-white px-4 py-2 rounded">
+                Esporta CSV
+              </button>
+              <button onClick={esportaMagazzinoExcel} className="bg-gray-600 text-white px-4 py-2 rounded">
+                Esporta Excel
+              </button>
+              <button onClick={esportaMagazzinoPDF} className="bg-red-600 text-white px-4 py-2 rounded">
+                Esporta PDF
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Lista ordini */}
+        {paginaNapoli === "ordini" && (
+          <div className="p-4">
+            <h2 className="font-bold mb-4">Ordini da evadere</h2>
+            <table className="w-full border">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Cliente</th>
+                  <th>Stato</th>
+                  <th>Azioni</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ordini.map((o) => (
+                  <tr key={o.id}>
+                    <td>{o.id}</td>
+                    <td>{o.customer}</td>
+                    <td>{o.stato}</td>
+                    <td className="flex gap-2">
+                      <button
+                        onClick={() => apriOrdine(o)}
+                        className="bg-blue-600 text-white px-2 py-1 rounded"
+                      >
+                        Apri
+                      </button>
+                      <button
+                        onClick={() => eliminaOrdine(o.id)}
+                        className="bg-red-600 text-white px-2 py-1 rounded"
+                      >
+                        X
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <button
+              onClick={() => setPaginaNapoli("magazzino")}
+              className="mt-4 bg-gray-600 text-white px-4 py-2 rounded"
+            >
+              Torna indietro
+            </button>
+          </div>
+        )}
+
+        {/* Dettaglio ordine */}
+        {paginaNapoli === "dettaglio" && ordineSelezionato && (
+          <div className="p-4">
+            <h2 className="font-bold mb-4">
+              Ordine {ordineSelezionato.id} – {ordineSelezionato.customer}
+            </h2>
+            <table className="w-full border">
+              <thead>
+                <tr>
+                  <th>Articolo</th>
+                  <th>Taglia</th>
+                  <th>Colore</th>
+                  <th>Richiesti</th>
+                  <th>Confermati</th>
+                </tr>
+              </thead>
+              <tbody>
+                {righeOrdine.map((r, idx) => (
+                  <tr key={r.id}>
+                    <td>{r.articolo}</td>
+                    <td>{r.taglia}</td>
+                    <td>{r.colore}</td>
+                    <td>{r.richiesti}</td>
+                    <td>
+                      <input
+                        type="number"
+                        value={r.confermati || 0}
+                        min={0}
+                        max={r.richiesti}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value) || 0;
+                          setRigheOrdine((prev) =>
+                            prev.map((x, i) =>
+                              i === idx ? { ...x, confermati: val } : x
+                            )
+                          );
+                        }}
+                        className="w-16 border p-1 rounded"
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={confermaOrdine}
+                className="bg-green-600 text-white px-4 py-2 rounded"
+              >
+                Conferma Ordine
+              </button>
+              <button
+                onClick={() => setPaginaNapoli("ordini")}
+                className="bg-gray-600 text-white px-4 py-2 rounded"
+              >
+                Torna indietro
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -636,3 +746,4 @@ export default function App() {
   // fallback
   return <div>Ruolo non riconosciuto</div>;
 }
+
