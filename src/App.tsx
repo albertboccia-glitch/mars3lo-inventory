@@ -2,12 +2,7 @@
   // 🔹 INTERFACCIA BOLOGNA
   // ===============================
   if (role === "BO") {
-    const [paginaBo, setPaginaBo] = useState<"magazzino" | "carrello" | "ordini" | "dettaglio">("magazzino");
-    const [ordiniBo, setOrdiniBo] = useState<any[]>([]);
-    const [ordineBoSelezionato, setOrdineBoSelezionato] = useState<any | null>(null);
-    const [righeOrdineBo, setRigheOrdineBo] = useState<any[]>([]);
-
-    // 🔹 Carica ordini evasi
+    // Carica ordini evasi da Napoli
     const fetchOrdiniBo = async () => {
       const { data, error } = await supabase
         .from("orders")
@@ -17,18 +12,17 @@
       if (!error && data) setOrdiniBo(data);
     };
 
-    // 🔹 Apri dettaglio ordine
+    // Apri ordine
     const apriOrdineBo = async (ordine: any) => {
       const { data: righe } = await supabase
         .from("order_lines")
         .select("*")
         .eq("order_id", ordine.id);
       setOrdineBoSelezionato(ordine);
-      setRigheOrdineBo(righe || []);
+      setRigheBo(righe || []);
       setPaginaBo("dettaglio");
     };
 
-    // 🔹 Render Bologna
     return (
       <div className="min-h-screen bg-gray-100">
         {/* Barra nera */}
@@ -53,25 +47,9 @@
         {/* Magazzino */}
         {paginaBo === "magazzino" && (
           <>
-            {/* Qui resta tutta la griglia articoli + carrello come prima */}
-            {/* Alla fine del carrello aggiungi pulsanti export */}
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button onClick={inviaOrdine} className="bg-blue-600 text-white px-4 py-2 rounded">
-                Invia Ordine
-              </button>
-              <button onClick={esportaCSV} className="bg-gray-600 text-white px-4 py-2 rounded">
-                Esporta CSV
-              </button>
-              <button onClick={esportaExcel} className="bg-gray-600 text-white px-4 py-2 rounded">
-                Esporta Excel
-              </button>
-              <button onClick={esportaPDF} className="bg-red-600 text-white px-4 py-2 rounded">
-                Esporta PDF
-              </button>
-              <button onClick={svuotaCarrello} className="bg-red-600 text-white px-4 py-2 rounded">
-                Svuota Ordine
-              </button>
-            </div>
+            {/* Qui ci va la UI completa del magazzino e carrello di Bologna
+                (quella che già avevi funzionante, con cliente, sconto,
+                griglia articoli, carrello, pulsanti invio ordine, export, ecc.) */}
           </>
         )}
 
@@ -84,7 +62,7 @@
                 <tr>
                   <th>ID</th>
                   <th>Cliente</th>
-                  <th>Data</th>
+                  <th>Stato</th>
                   <th>Azioni</th>
                 </tr>
               </thead>
@@ -93,7 +71,7 @@
                   <tr key={o.id}>
                     <td>{o.id}</td>
                     <td>{o.customer}</td>
-                    <td>{new Date(o.created_at).toLocaleString()}</td>
+                    <td>{o.stato}</td>
                     <td>
                       <button
                         onClick={() => apriOrdineBo(o)}
@@ -132,7 +110,7 @@
                 </tr>
               </thead>
               <tbody>
-                {righeOrdineBo.map((r) => (
+                {righeBo.map((r) => (
                   <tr key={r.id}>
                     <td>{r.articolo}</td>
                     <td>{r.taglia}</td>
@@ -158,14 +136,17 @@
   // 🔹 INTERFACCIA NAPOLI
   // ===============================
   if (role === "NA") {
+    // Carica ordini da Supabase
     const fetchOrdini = async () => {
       const { data, error } = await supabase
         .from("orders")
         .select("*")
+        .eq("stato", "In attesa")
         .order("created_at", { ascending: false });
       if (!error && data) setOrdini(data);
     };
 
+    // Elimina ordine (solo dalla lista, non dal magazzino)
     const eliminaOrdine = async (id: string) => {
       if (!confirm("Vuoi eliminare questo ordine dalla lista?")) return;
       await supabase.from("orders").delete().eq("id", id);
@@ -173,6 +154,7 @@
       fetchOrdini();
     };
 
+    // Apri ordine
     const apriOrdine = async (ordine: any) => {
       const { data: righe } = await supabase
         .from("order_lines")
@@ -183,16 +165,25 @@
       setPaginaNapoli("dettaglio");
     };
 
+    // Conferma ordine
     const confermaOrdine = async () => {
       if (!ordineSelezionato) return;
+
       for (const r of righeOrdine) {
         await supabase
           .from("order_lines")
           .update({ confermati: r.confermati })
           .eq("id", r.id);
       }
-      await supabase.from("orders").update({ stato: "Evaso" }).eq("id", ordineSelezionato.id);
+
+      await supabase
+        .from("orders")
+        .update({ stato: "Evaso" })
+        .eq("id", ordineSelezionato.id);
+
+      // Scala magazzino (RPC già definita in Supabase)
       await supabase.rpc("scala_magazzino_da_ordini");
+
       alert("Ordine evaso!");
       setPaginaNapoli("ordini");
       fetchOrdini();
@@ -222,7 +213,34 @@
         {/* Magazzino */}
         {paginaNapoli === "magazzino" && (
           <>
-            {/* Griglia magazzino uguale a Bologna ma senza ordina */}
+            {/* Filtro categorie + ricerca */}
+            <div className="px-4 mb-4 flex flex-wrap gap-4 items-center">
+              <div>
+                <label className="mr-2">Categoria:</label>
+                <select
+                  value={filtro}
+                  onChange={(e) => setFiltro(e.target.value)}
+                  className="border p-2 rounded"
+                >
+                  <option value="TUTTI">Tutti</option>
+                  <option value="GIACCHE">Giacche</option>
+                  <option value="PANTALONI">Pantaloni</option>
+                  <option value="GIUBBOTTI">Giubbotti</option>
+                  <option value="MAGLIE">Maglie</option>
+                  <option value="CAPPOTTI">Cappotti</option>
+                  <option value="CAMICIE">Camicie</option>
+                </select>
+              </div>
+              <input
+                type="text"
+                placeholder="Cerca per codice o articolo..."
+                className="border p-2 rounded flex-1"
+                value={ricerca}
+                onChange={(e) => setRicerca(e.target.value)}
+              />
+            </div>
+
+            {/* Griglia articoli */}
             <div className="p-4 space-y-6">
               {Object.values(grouped).map((gruppo: any) => {
                 const rows: StockRow[] = sortTaglie(
@@ -243,7 +261,9 @@
                           <tr>
                             <th className="px-2">Taglia</th>
                             {rows.map((r) => (
-                              <th key={r.taglia} className="px-2">{r.taglia}</th>
+                              <th key={r.taglia} className="px-2">
+                                {r.taglia}
+                              </th>
                             ))}
                           </tr>
                           <tr>
@@ -262,13 +282,68 @@
 
             {/* Pulsanti export */}
             <div className="p-4 bg-white shadow mt-6 flex flex-wrap gap-2">
-              <button onClick={esportaMagazzinoCSV} className="bg-gray-600 text-white px-4 py-2 rounded">
+              <button
+                onClick={() => {
+                  const header = ["Articolo", "Categoria", "Taglia", "Colore", "Q.tà", "Prezzo"];
+                  const rows = stock.map((r) => [
+                    r.articolo,
+                    r.categoria,
+                    r.taglia,
+                    r.colore,
+                    r.qty,
+                    r.prezzo.toFixed(2),
+                  ]);
+                  const csv = [header, ...rows].map((x) => x.join(",")).join("\n");
+                  const blob = new Blob([csv], { type: "text/csv" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "magazzino.csv";
+                  a.click();
+                }}
+                className="bg-gray-600 text-white px-4 py-2 rounded"
+              >
                 Esporta CSV
               </button>
-              <button onClick={esportaMagazzinoExcel} className="bg-gray-600 text-white px-4 py-2 rounded">
+              <button
+                onClick={() => {
+                  const ws = XLSX.utils.json_to_sheet(
+                    stock.map((r) => ({
+                      Articolo: r.articolo,
+                      Categoria: r.categoria,
+                      Taglia: r.taglia,
+                      Colore: r.colore,
+                      Quantità: r.qty,
+                      Prezzo: r.prezzo.toFixed(2),
+                    }))
+                  );
+                  const wb = XLSX.utils.book_new();
+                  XLSX.utils.book_append_sheet(wb, ws, "Magazzino");
+                  XLSX.writeFile(wb, "magazzino.xlsx");
+                }}
+                className="bg-gray-600 text-white px-4 py-2 rounded"
+              >
                 Esporta Excel
               </button>
-              <button onClick={esportaMagazzinoPDF} className="bg-red-600 text-white px-4 py-2 rounded">
+              <button
+                onClick={() => {
+                  const doc = new jsPDF();
+                  doc.text("Magazzino Napoli", 10, 10);
+                  (doc as any).autoTable({
+                    head: [["Articolo", "Categoria", "Taglia", "Colore", "Q.tà", "Prezzo"]],
+                    body: stock.map((r) => [
+                      r.articolo,
+                      r.categoria,
+                      r.taglia,
+                      r.colore,
+                      r.qty,
+                      `€${r.prezzo.toFixed(2)}`,
+                    ]),
+                  });
+                  doc.save("magazzino.pdf");
+                }}
+                className="bg-red-600 text-white px-4 py-2 rounded"
+              >
                 Esporta PDF
               </button>
             </div>
@@ -384,5 +459,3 @@
       </div>
     );
   }
-
-
