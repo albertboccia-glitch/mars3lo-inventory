@@ -1,6 +1,6 @@
-  // --- BLOCCO 1: Bologna ---
+// --- BLOCCO 1: Bologna ---
   if (role === "BO") {
-    // Filtraggio stock
+    // Filtraggio s tock
     const filteredStock = stock.filter(
       (s) =>
         (filtro === "TUTTI" || s.categoria === filtro) &&
@@ -54,33 +54,6 @@
             />
             %
           </label>
-        </div>
-
-        {/* Filtro categorie + ricerca */}
-        <div className="px-4 mb-4 flex flex-wrap gap-4 items-center">
-          <div>
-            <label className="mr-2">Categoria:</label>
-            <select
-              value={filtro}
-              onChange={(e) => setFiltro(e.target.value)}
-              className="border p-2 rounded"
-            >
-              <option value="TUTTI">Tutti</option>
-              <option value="GIACCHE">Giacche</option>
-              <option value="PANTALONI">Pantaloni</option>
-              <option value="GIUBBOTTI">Giubbotti</option>
-              <option value="MAGLIE">Maglie</option>
-              <option value="CAPPOTTI">Cappotti</option>
-              <option value="CAMICIE">Camicie</option>
-            </select>
-          </div>
-          <input
-            type="text"
-            placeholder="Cerca per codice o articolo..."
-            className="border p-2 rounded flex-1"
-            value={ricerca}
-            onChange={(e) => setRicerca(e.target.value)}
-          />
         </div>
 
         {/* Griglia articoli */}
@@ -469,7 +442,7 @@
     );
   }
 
-   // --- Fallback ---
+  // --- Fallback ---
   return (
     <div className="p-8 text-center">
       <h2>Interfaccia non disponibile</h2>
