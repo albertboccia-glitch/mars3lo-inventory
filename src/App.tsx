@@ -424,9 +424,9 @@ export default function App() {
   // 🔹 INTERFACCIA NAPOLI
   // ===============================
   if (role === "NA") {
-    // 🔹 Export Magazzino
+    // 🔹 Funzioni di export
     const esportaMagazzinoCSV = () => {
-      const header = ["Articolo", "Categoria", "Taglia", "Colore", "Disponibili", "Prezzo"];
+      const header = ["Articolo", "Categoria", "Taglia", "Colore", "Q.tà", "Prezzo"];
       const rows = stock.map((r) => [
         r.articolo,
         r.categoria,
@@ -451,7 +451,7 @@ export default function App() {
           Categoria: r.categoria,
           Taglia: r.taglia,
           Colore: r.colore,
-          Disponibili: r.qty,
+          Quantità: r.qty,
           Prezzo: r.prezzo.toFixed(2),
         }))
       );
@@ -464,7 +464,7 @@ export default function App() {
       const doc = new jsPDF();
       doc.text("Magazzino Napoli", 10, 10);
       (doc as any).autoTable({
-        head: [["Articolo", "Categoria", "Taglia", "Colore", "Disp.", "Prezzo"]],
+        head: [["Articolo", "Categoria", "Taglia", "Colore", "Q.tà", "Prezzo"]],
         body: stock.map((r) => [
           r.articolo,
           r.categoria,
@@ -486,10 +486,67 @@ export default function App() {
             <h1 className="text-white text-xl font-bold">Mars3lo B2B – Napoli</h1>
           </div>
           <button
-            onClick={() => alert("Qui si aprirà la lista ordini da evadere")}
+            onClick={async () => {
+              const { data: orders } = await supabase
+                .from("orders")
+                .select("*")
+                .eq("stato", "In attesa")
+                .order("created_at", { ascending: false });
+
+              if (!orders || orders.length === 0) {
+                alert("Nessun ordine da evadere");
+                return;
+              }
+
+              const id = prompt(
+                "Ordini da evadere:\n" +
+                  orders.map((o: any) => `${o.id} - ${o.customer}`).join("\n") +
+                  "\n\nInserisci ID ordine da aprire:"
+              );
+              if (!id) return;
+
+              const { data: lines } = await supabase
+                .from("order_lines")
+                .select("*")
+                .eq("order_id", id);
+
+              if (!lines || lines.length === 0) {
+                alert("Ordine vuoto!");
+                return;
+              }
+
+              // Per ogni riga chiediamo confermati
+              const confermati: { [k: number]: number } = {};
+              for (const r of lines) {
+                const val = prompt(
+                  `${r.articolo} ${r.colore} taglia ${r.taglia}\nRichiesti: ${r.richiesti}\nConfermati:`,
+                  r.richiesti
+                );
+                confermati[r.id] = parseInt(val || "0");
+              }
+
+              // Aggiorna righe
+              for (const r of lines) {
+                await supabase
+                  .from("order_lines")
+                  .update({ confermati: confermati[r.id] })
+                  .eq("id", r.id);
+              }
+
+              // Aggiorna stato ordine
+              await supabase
+                .from("orders")
+                .update({ stato: "Evaso" })
+                .eq("id", id);
+
+              // Scala magazzino
+              await supabase.rpc("scala_magazzino_da_ordini");
+
+              alert("Ordine evaso e magazzino aggiornato!");
+            }}
             className="bg-yellow-500 text-black px-4 py-2 rounded"
           >
-            Ordini da Evadere
+            Ordini
           </button>
         </div>
 
@@ -520,7 +577,7 @@ export default function App() {
           />
         </div>
 
-        {/* Griglia magazzino */}
+        {/* Griglia articoli (senza riga Ordina) */}
         <div className="p-4 space-y-6">
           {Object.values(grouped).map((gruppo: any) => {
             const rows: StockRow[] = sortTaglie(
@@ -576,5 +633,6 @@ export default function App() {
     );
   }
 
-  return null;
+  // fallback
+  return <div>Ruolo non riconosciuto</div>;
 }
