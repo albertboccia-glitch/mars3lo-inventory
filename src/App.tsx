@@ -475,4 +475,5 @@
       <h2>Interfaccia non disponibile</h2>
     </div>
   );
+  }
 
