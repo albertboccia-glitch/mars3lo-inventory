@@ -77,6 +77,11 @@ export default function App() {
   const [sconto, setSconto] = useState(0);
   const [filtro, setFiltro] = useState("TUTTI");
   const [ricerca, setRicerca] = useState("");
+  // Stato specifico per Napoli
+const [paginaNapoli, setPaginaNapoli] = useState<"magazzino" | "ordini" | "dettaglio">("magazzino");
+const [ordini, setOrdini] = useState<any[]>([]);
+const [ordineSelezionato, setOrdineSelezionato] = useState<any | null>(null);
+const [righeOrdine, setRigheOrdine] = useState<any[]>([]);
   const [ordiniInput, setOrdiniInput] = useState<Record<string, Record<string, number>>>({});
   const [loginId, setLoginId] = useState("");
   const [loginPw, setLoginPw] = useState("");
@@ -424,11 +429,6 @@ export default function App() {
   // 🔹 INTERFACCIA NAPOLI
   // ===============================
   if (role === "NA") {
-    const [paginaNapoli, setPaginaNapoli] = useState<"magazzino" | "ordini" | "dettaglio">("magazzino");
-    const [ordini, setOrdini] = useState<any[]>([]);
-    const [ordineSelezionato, setOrdineSelezionato] = useState<any | null>(null);
-    const [righeOrdine, setRigheOrdine] = useState<any[]>([]);
-
     // 🔹 Carica ordini da Supabase
     const fetchOrdini = async () => {
       const { data, error } = await supabase
@@ -746,4 +746,5 @@ export default function App() {
   // fallback
   return <div>Ruolo non riconosciuto</div>;
 }
+
 
