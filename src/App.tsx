@@ -1,4 +1,42 @@
-  // ===============================
+import React, { useState, useEffect } from "react";
+import { createClient } from "@supabase/supabase-js";
+import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
+import "jspdf-autotable";
+
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL!,
+  import.meta.env.VITE_SUPABASE_ANON_KEY!
+);
+
+export default function App() {
+  // --- Stati generali ---
+  const [stock, setStock] = useState<StockRow[]>([]);
+  const [carrello, setCarrello] = useState<CarrelloRow[]>([]);
+  const [cliente, setCliente] = useState("");
+  const [sconto, setSconto] = useState(0);
+  const [filtro, setFiltro] = useState("TUTTI");
+  const [ricerca, setRicerca] = useState("");
+  const [ordiniInput, setOrdiniInput] = useState<Record<string, Record<string, number>>>({});
+
+  // --- Stati Bologna ---
+  const [paginaBo, setPaginaBo] = useState<"magazzino" | "ordini" | "dettaglio">("magazzino");
+  const [ordiniBo, setOrdiniBo] = useState<any[]>([]);
+  const [ordineBoSelezionato, setOrdineBoSelezionato] = useState<any | null>(null);
+  const [righeBo, setRigheBo] = useState<any[]>([]);
+
+  // --- Stati Napoli ---
+  const [paginaNapoli, setPaginaNapoli] = useState<"magazzino" | "ordini" | "dettaglio">("magazzino");
+  const [ordini, setOrdini] = useState<any[]>([]);
+  const [ordineSelezionato, setOrdineSelezionato] = useState<any | null>(null);
+  const [righeOrdine, setRigheOrdine] = useState<any[]>([]);
+
+  // --- Stati login ---
+  const [loginId, setLoginId] = useState("");
+  const [loginPw, setLoginPw] = useState("");
+  const [logged, setLogged] = useState(false);
+  const [role, setRole] = useState<"BO" | "NA" | null>(null);
+// ===============================
   // 🔹 INTERFACCIA BOLOGNA
   // ===============================
   if (role === "BO") {
