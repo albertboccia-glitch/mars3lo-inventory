@@ -469,11 +469,10 @@
     );
   }
 
-  // --- Fallback ---
+   // --- Fallback ---
   return (
     <div className="p-8 text-center">
       <h2>Interfaccia non disponibile</h2>
     </div>
   );
-  }
-
+}
